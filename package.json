@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-prompts",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Universal Model Context Protocol (MCP) Server for System Prompts & AI Personas across Anthropic, OpenAI, Cursor, DeepSeek, Google, and more",
   "type": "module",
   "main": "dist/index.cjs",
