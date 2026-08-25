@@ -1,0 +1,60 @@
+{
+  "name": "system-prompts-mcp",
+  "version": "0.1.0",
+  "description": "Universal Model Context Protocol (MCP) Server for System Prompts & AI Personas across Anthropic, OpenAI, Cursor, DeepSeek, Google, and more",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "system-prompts-mcp": "./dist/cli.cjs"
+  },
+  "files": [
+    "dist",
+    "Anthropic",
+    "Cursor",
+    "DeepSeek",
+    "GLM",
+    "Google",
+    "Kimi",
+    "Meta",
+    "Microsoft",
+    "Misc",
+    "Mistral",
+    "Notion",
+    "OpenAI",
+    "OpenCode",
+    "Perplexity",
+    "Pi",
+    "Qwen",
+    "xAI"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/cli.ts --format esm,cjs --dts --clean",
+    "start": "node dist/cli.cjs serve",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "system-prompts",
+    "deepseek",
+    "claude",
+    "cursor",
+    "openai",
+    "ai-agent",
+    "prompts"
+  ],
+  "author": "menotbobbybrown",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.7"
+  }
+}
