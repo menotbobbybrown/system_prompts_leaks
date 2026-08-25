@@ -1,32 +1,61 @@
 <p align="center">
-  <sub>Thanks to</sub>  
+  <img src="assets/banner.svg" alt="System Prompts MCP Banner" width="100%"/>
 </p>
 
 <p align="center">
-  <a href="https://go.asgeirtj.workers.dev/latitude">
-    <img src="assets/latitude-dark.png" alt="Latitude Logo" width="700"/>
-  </a>
+  <a href="https://menotbobbybrown.github.io/system_prompts_leaks/"><img src="https://img.shields.io/badge/Docs-Live%20Portal-blue?style=flat&logo=google-chrome&logoColor=white" alt="Live Docs"/></a>
+  <a href="https://github.com/menotbobbybrown/system_prompts_leaks/actions/workflows/sync-upstream.yml"><img src="https://img.shields.io/badge/Upstream%20Sync-Daily%20Auto-brightgreen?style=flat&logo=github-actions&logoColor=white" alt="Sync Upstream"/></a>
+  <img src="https://img.shields.io/badge/MCP-Protocol%20Native-6366f1?style=flat" alt="MCP Native"/>
+  <img src="https://img.shields.io/badge/PRs-Welcome-brightgreen" alt="PRs Welcome"/>
 </p>
 
-<div align="center" markdown="1">
+---
 
-### [Open Source Agent Analytics](https://go.asgeirtj.workers.dev/latitude)  
-[Understand your agents in production](https://go.asgeirtj.workers.dev/latitude)
+## ⚡ Use as Model Context Protocol (MCP) Server
 
-</div>
+Turn 100+ state-of-the-art system prompts (Anthropic, OpenAI, Cursor, DeepSeek, Google Gemini) into **dynamic MCP prompt templates and AI personas** for your agents:
+
+### 1. Instant Terminal CLI
+```bash
+# List all 100+ discovered system prompts
+npx system-prompts-mcp list
+
+# Filter by vendor (Anthropic, Cursor, OpenAI, DeepSeek, Google)
+npx system-prompts-mcp list Cursor
+
+# View the full prompt content
+npx system-prompts-mcp get cursor/cursor
+npx system-prompts-mcp get deepseek/deepseek-v3
+
+# Search by keyword
+npx system-prompts-mcp search "coding assistant"
+```
+
+### 2. Connect to DeepSeek Harness, Claude Desktop, or Cursor
+Add to your `~/.dsh/mcp.json`, `claude_desktop_config.json`, or `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "system_prompts": {
+      "command": "npx",
+      "args": ["-y", "system-prompts-mcp", "serve"]
+    }
+  }
+}
+```
+
+🌐 **Interactive Web Hub & Documentation:** [https://menotbobbybrown.github.io/system_prompts_leaks/](https://menotbobbybrown.github.io/system_prompts_leaks/)
 
 ---
 
 > **The Washington Post** built its interactive story on prompts from this repo: [See the hidden rules behind AI. Then use them to rewrite this article.](https://wapo.st/49t4gSb) (May 11, 2026)
 > 
 > **CEPS' AI World** built a live data dashboard from this repo's files: [System prompts and what they tell us about the chat before the chat](https://aiworld.eu/story/system-prompts-and-what-they-tell-us-about-the-chat-before-the-chat)  (July 10, 2026)
+
 # System Prompts Leaks
 Leaked system prompts, captured verbatim — the hidden instructions and rules that ChatGPT, Claude, Gemini, Grok and every other AI chatbot receives before your first message.
 
-
-
-![Last Commit](https://img.shields.io/github/last-commit/asgeirtj/system_prompts_leaks?style=flat)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](http://makeapullrequest.com)
 
 
 
