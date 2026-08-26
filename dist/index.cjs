@@ -124,6 +124,11 @@ var PromptLoader = class {
       (p) => p.id === normalized || p.name.toLowerCase() === normalized || p.id.endsWith(`/${normalized}`)
     );
     if (!prompt) return void 0;
+    const resolvedTarget = import_node_path.default.resolve(prompt.filePath);
+    const resolvedBase = import_node_path.default.resolve(this.baseDir);
+    if (!resolvedTarget.startsWith(resolvedBase)) {
+      throw new Error(`[Security] Path traversal violation: Attempted to access file outside base directory.`);
+    }
     try {
       const content = import_node_fs.default.readFileSync(prompt.filePath, "utf-8");
       return { prompt, content };

@@ -112,6 +112,13 @@ export class PromptLoader {
 
     if (!prompt) return undefined;
 
+    // Security: Ensure target file stays strictly within the repository baseDir
+    const resolvedTarget = path.resolve(prompt.filePath);
+    const resolvedBase = path.resolve(this.baseDir);
+    if (!resolvedTarget.startsWith(resolvedBase)) {
+      throw new Error(`[Security] Path traversal violation: Attempted to access file outside base directory.`);
+    }
+
     try {
       const content = fs.readFileSync(prompt.filePath, 'utf-8');
       return { prompt, content };
