@@ -64,6 +64,8 @@ Leaked system prompts, captured verbatim — the hidden instructions and rules t
 
 | What | Date | Link |
 |------|------|------|
+| **Claude Code headless (Fable 5.1)** | September 5, 2026 | [Claude Code headless system prompt (Fable 5.1)](Anthropic/claude-code/claude-code-headless-fable-5.1.md) |
+| **Codex GPT-6-Astra** | September 4, 2026 | [Codex GPT-6-Astra system prompt](OpenAI/Codex/gpt-6-astra.md) |
 | **Claude Fable 5.1** | September 1, 2026 | [Claude Fable 5.1 system prompt](Anthropic/claude-fable-5.1.md) · [Claude Code (Fable 5.1)](Anthropic/claude-code/claude-code-fable-5.1.md) |
 | **Grok 4.6** | August 29, 2026 | [Grok 4.6 system prompt](xAI/grok-4.6.md) |
 | **Grok Bot** | August 21, 2026 | [Grok Bot System Prompt](xAI/grok-bot.md) |
@@ -71,7 +73,7 @@ Leaked system prompts, captured verbatim — the hidden instructions and rules t
 | **Muse Code (Meta's coding CLI)** | August 17, 2026 | [Muse Code system prompt](Meta/muse-code.md) |
 | **Claude Cowork (new capture + setup skills)** | August 17, 2026 | [Claude Cowork system prompt](Anthropic/claude-cowork/claude-cowork.md) · [setup skills](Anthropic/claude-cowork) |
 | **Claude Science** | August 14, 2026 | [Claude Science system prompt](Anthropic/claude-science.md) |
-| **Codex GPT-5.6 (Sol variant)** | July 26, 2026 | [Codex GPT-5.6 system prompt (Terra/Luna)](OpenAI/Codex/gpt-5.6.md) · [Sol](OpenAI/Codex/gpt-5.6-sol.md) |
+| **Codex GPT-5.6 (Sol variant)** | July 26, 2026 | [Codex GPT-5.6 system prompt](OpenAI/Codex/gpt-5.6.md) |
 | **Grok 4.5** | July 26, 2026 | [Grok 4.5 system prompt](xAI/grok-4.5.md) |
 | **Claude Opus 5** | July 24, 2026 | [Claude Opus 5 system prompt](Anthropic/claude-opus-5.md) · [Claude Code (Opus 5)](Anthropic/claude-code/claude-code-opus-5.md) |
 | **Claude Design (full prompt + 53 tools + 22 skills + 10 starter components)** | July 23, 2026 | [Claude Design system prompt](Anthropic/claude-design/claude-design.md) · [skills](Anthropic/claude-design/skills) · [starter components](Anthropic/claude-design/starter-components) |
