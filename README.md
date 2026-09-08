@@ -385,3 +385,23 @@ Leaked system prompts, captured verbatim — the hidden instructions and rules t
   </picture>
  </a>
 </p>
+
+---
+
+## 🤝 Contributing
+
+Contributions are warmly welcome! Whether you are reporting an issue, proposing an adapter, optimizing performance, or fixing a bug, please check out our [Contributing Guide](CONTRIBUTING.md).
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'feat: add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feat/AmazingFeature`)
+5. Open a [Pull Request](https://github.com/menotbobbybrown/system_prompts_leaks/pulls)
+
+---
+
+## 📄 License & Community
+
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more information.
+
+Built with 💙 for the DeepSeek Harness community.
