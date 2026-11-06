@@ -62,7 +62,7 @@ When adding to permission arrays or hook arrays, **merge with existing**, don't 
 ```
 
 **RIGHT** (preserves existing + adds new):
-```json
+```yaml
 {
   "permissions": {
     "allow": [
@@ -89,7 +89,7 @@ Settings load in order: user → project → local (later overrides earlier).
 ## Settings Schema Reference
 
 ### Permissions
-```json
+```yaml
 {
   "permissions": {
     "allow": ["Bash(npm *)", "Edit(.claude)", "Read"],
@@ -105,6 +105,7 @@ Settings load in order: user → project → local (later overrides earlier).
 - Exact match: `"Bash(npm run test)"`
 - Prefix wildcard: `"Bash(git *)"` - matches `git`, `git status`, `git commit`, etc.
 - Tool only: `"Read"` - allows all Read operations
+- File paths: `"Edit(src/**)"` - path rules in `permissions` use `Edit(path)` for every file-writing tool (Write, Edit, NotebookEdit) and `Read(path)` for reads. `Write(path)`, `NotebookEdit(path)` and `Glob(path)` rules are not matched by file permission checks. Bare tool names (`"Write"`), deny/ask `Tool(param:value)` rules and hook `if` conditions still use each tool's own name
 
 ### Environment Variables
 ```json
@@ -117,7 +118,7 @@ Settings load in order: user → project → local (later overrides earlier).
 ```
 
 ### Model & Agent
-```json
+```yaml
 {
   "model": "sonnet",  // or "fable", "opus", "haiku", full model ID
   "agent": "agent-name",
@@ -134,7 +135,7 @@ Settings load in order: user → project → local (later overrides earlier).
   }
 }
 ```
-Set `commit` or `pr` to empty string `""` to hide that attribution.
+Set `commit` or `pr` to empty string `""` to hide that attribution. To hide all of it, set both to `""` and also set `"sessionUrl": false`. Write this object form, not `"attribution": false`: older Claude Code versions reject true or false here and then skip the whole settings file.
 
 ### MCP Server Management
 ```json
@@ -160,6 +161,8 @@ Plugin syntax: `plugin-name@source` where source is `claude-code-marketplace`, `
 - `cleanupPeriodDays`: Days to keep transcripts before automatic cleanup (default: 30; minimum 1)
 - `respectGitignore`: Whether to respect .gitignore (default: true)
 - `spinnerTipsEnabled`: Show tips in spinner
+- `timeFormat`: Clock format for times shown in the UI: "auto" (default), "12-hour", "24-hour", "24-hour-utc", or a strftime pattern such as "%H:%M"
+- `timeZone`: IANA time zone for times shown in the UI, e.g. "UTC" (default: system time zone)
 - `spinnerVerbs`: Customize spinner verbs (`{ "mode": "append" | "replace", "verbs": [...] }`)
 - `spinnerTipsOverride`: Override spinner tips (`{ "excludeDefault": true, "tips": ["Custom tip"] }`)
 - `syntaxHighlightingDisabled`: Disable diff highlighting
@@ -227,7 +230,7 @@ Only available for tool events: PreToolUse, PostToolUse, PermissionRequest.
 Only available for tool events: PreToolUse, PostToolUse, PermissionRequest.
 
 ### Hook Input (stdin JSON)
-```json
+```yaml
 {
   "session_id": "abc123",
   "tool_name": "Write",
@@ -329,7 +332,6 @@ echo '{"systemMessage": "Session complete!"}'
 Given an event, matcher, target file, and desired behavior, follow this flow. Each step catches a different failure class — a hook that silently does nothing is worse than no hook.
 
 1. **Dedup check.** Read the target file. If a hook already exists on the same event+matcher, show the existing command and ask: keep it, replace it, or add alongside.
-
 2. **Construct the command for THIS project — don't assume.** The hook receives JSON on stdin. Build a command that:
    - Extracts any needed payload safely — use `jq -r` into a quoted variable or `{ read -r f; ... "$f"; }`, NOT unquoted `| xargs` (splits on spaces)
    - Invokes the underlying tool the way this project runs it (npx/bunx/yarn/pnpm? Makefile target? globally-installed?)
@@ -344,13 +346,11 @@ Given an event, matcher, target file, and desired behavior, follow this flow. Ea
    Check exit code AND side effect (file actually formatted, test actually ran). If it fails you get a real error — fix (wrong package manager? tool not installed? jq path wrong?) and retest. Once it works, wrap with `2>/dev/null || true` (unless the user wants a blocking check).
 
 4. **Write the JSON.** Merge into the target file (schema shape in the "Hook Structure" section above). If this creates `.claude/settings.local.json` for the first time, add it to .gitignore — the Write tool doesn't auto-gitignore it.
-
 5. **Validate syntax + schema in one shot:**
 
    `jq -e '.hooks.<event>[] | select(.matcher == "<matcher>") | .hooks[] | select(.type == "command") | .command' <target-file>`
 
    Exit 0 + prints your command = correct. Exit 4 = matcher doesn't match. Exit 5 = malformed JSON or wrong nesting. A broken settings.json silently disables ALL settings from that file — fix any pre-existing malformation too.
-
 6. **Prove the hook fires** — only for `Pre|PostToolUse` on a matcher you can trigger in-turn (`Write|Edit` via Edit, `Bash` via Bash). `Stop`/`UserPromptSubmit`/`SessionStart` fire outside this turn — skip to step 7.
 
    For a **formatter** on `PostToolUse`/`Write|Edit`: introduce a detectable violation via Edit (two consecutive blank lines, bad indentation, missing semicolon — something this formatter corrects; NOT trailing whitespace, Edit strips that before writing), re-read, confirm the hook **fixed** it. For **anything else**: temporarily prefix the command in settings.json with `echo "$(date) hook fired" >> /tmp/claude-hook-check.txt; `, trigger the matching tool (Edit for `Write|Edit`, a harmless `true` for `Bash`), read the sentinel file.
@@ -358,7 +358,6 @@ Given an event, matcher, target file, and desired behavior, follow this flow. Ea
    **Always clean up** — revert the violation, strip the sentinel prefix — whether the proof passed or failed.
 
    **If proof fails but pipe-test passed and `jq -e` passed**: the settings watcher isn't watching `.claude/` — it only watches directories that had a settings file when this session started. The hook is written correctly. Tell the user to open `/hooks` once (reloads config) or restart — you can't do this yourself; `/hooks` is a user UI menu and opening it ends this turn.
-
 7. **Handoff.** Tell the user the hook is live (or needs `/hooks`/restart per the watcher caveat). Point them at `/hooks` to review, edit, or disable it later. The UI only shows "Ran N hooks" if a hook errors or is slow — silent success is invisible by design.
 
 
@@ -425,11 +424,7 @@ If a hook isn't running:
 
 ## Full Settings JSON Schema
 
-IMPORTANT: Do not update the env unless explicitly instructed to do so.
-
-
-
-```json
+```yaml
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -456,6 +451,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
     },
     "gcpAuthRefresh": {
       "description": "Command to refresh GCP authentication (e.g., gcloud auth application-default login)",
+      "type": "string"
+    },
+    "processWrapper": {
+      "description": "Corporate launcher argv prefix for the background-agent supervisor, the sessions and workers it hosts, and the other covered background processes listed in the Claude Code corporate-launcher documentation. Equivalent to the CLAUDE_CODE_PROCESS_WRAPPER environment variable, which takes precedence when set. Honored from managed settings, a --settings/SDK-supplied settings file, and user settings, in that precedence order; project and local settings are ignored.",
       "type": "string"
     },
     "policyHelper": {
@@ -487,8 +486,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       },
       "required": [
         "path"
-      ],
-      "additionalProperties": false
+      ]
     },
     "fileSuggestion": {
       "description": "Custom file suggestion configuration for @ mentions",
@@ -505,66 +503,31 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "required": [
         "type",
         "command"
-      ],
-      "additionalProperties": false
+      ]
     },
     "respectGitignore": {
       "description": "Whether file picker should respect .gitignore files (default: true). Note: .ignore files are always respected.",
       "type": "boolean"
-    },
-    "breakReminder": {
-      "description": "@internal Opt-in break reminder. When enabled, shows a dismissible nudge after sustained continuous use. Never blocks — just a friendly heads-up.",
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "description": "Show a friendly nudge after sustained continuous use (default false). Must be true for the reminder to fire.",
-          "type": "boolean"
-        },
-        "intervalMinutes": {
-          "description": "Minutes of continuous use before the reminder fires (default 120). Re-fires every interval until you take a break.",
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "breakThresholdMinutes": {
-          "description": "Minutes of inactivity that count as a break and reset the timer (default 15)",
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "message": {
-          "description": "Custom reminder text. Leave unset for a rotating set of friendly nudges.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
-    },
-    "quietHours": {
-      "description": "@internal Opt-in quiet hours. When enabled, shows a single soft nudge per session while inside the configured local-time window. Never blocks.",
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "description": "Show a one-time nudge when you start or keep using the CLI inside your quiet-hours window (default false).",
-          "type": "boolean"
-        },
-        "start": {
-          "description": "Start of the quiet-hours window, 24-hour local time \"HH:MM\".",
-          "type": "string",
-          "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$"
-        },
-        "end": {
-          "description": "End of the quiet-hours window, 24-hour local time \"HH:MM\". May be earlier than start for an overnight range.",
-          "type": "string",
-          "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$"
-        }
-      },
-      "additionalProperties": false
     },
     "cleanupPeriodDays": {
       "description": "Number of days to retain chat transcripts before automatic cleanup (default: 30). Minimum 1. Use a large value for long retention; use --no-session-persistence to disable transcript writes entirely.",
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
+    },
+    "desktopSessionCleanupPeriodDays": {
+      "description": "Retention ceiling in days for session transcripts created or last written by a desktop-host surface (Claude Desktop, Cowork), which are otherwise exempt from the cleanupPeriodDays sweep. 0 (the default) means no ceiling: such transcripts are kept until deleted another way. Unlike cleanupPeriodDays, 0 is allowed because this setting never disables writes — it only bounds an exemption from deletion. The ceiling is a hard cap: it also bounds an active archive grace, so the grace window of a release marker never keeps files past the ceiling. Ignored when cleanupPeriodDays is managed by org policy. A ceiling at or below cleanupPeriodDays effectively disables the exemption: those transcripts age out on the regular cleanupPeriodDays schedule, so the effective retention is whichever of the two periods is longer.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "syncClaudeAiSkills": {
+      "description": "Set to false to turn off syncing of the skills you have enabled on claude.ai. In your user settings (or managed settings): nothing more is downloaded, previously synced skills (~/.claude/skills/synced) can no longer be run, are hidden from every session started afterwards, and are moved to ~/.claude/skills/.trash at the next launch (deleted after cleanupPeriodDays; re-downloaded, not restored, if you re-enable). In .claude/settings.local.json or --settings: downloads stop and synced skills are blocked and hidden for sessions in that workspace or invocation only (nothing is moved). Not read from project settings (.claude/settings.json). Only false is honored — the feature is enabled server-side for your account, so setting true does not turn it on early. While it is on, synced skills are available in every session, re-synced about every 10 minutes while a session is in use and a quarter as often otherwise, and removed when you disable them on claude.ai. Only applies when signed in with your Claude account.",
+      "type": "boolean"
+    },
+    "syncClaudeAiPlugins": {
+      "description": "Set to false to turn off syncing of the plugins you have enabled on claude.ai. In your user settings (or managed settings): nothing more is downloaded, previously synced plugins (~/.claude/plugins/synced) are hidden from every session started afterwards and moved to ~/.claude/plugins/.trash at the next launch (deleted after cleanupPeriodDays; re-downloaded, not restored, if you re-enable). In .claude/settings.local.json or --settings: downloads stop and synced plugins are hidden for sessions in that workspace or invocation only (nothing is moved). Not read from project settings (.claude/settings.json). Only false is honored — the feature is enabled server-side for your account, so setting true does not turn it on early. While it is on, synced plugins load in every session like plugins you installed yourself (a plugin you installed with the same name takes precedence), are re-synced at each launch, and are removed when you disable them on claude.ai. Only applies when signed in with your Claude account.",
+      "type": "boolean"
     },
     "skillListingMaxDescChars": {
       "description": "Per-skill description character cap in the skill listing sent to Claude (default: 1536). Descriptions longer than this are truncated. Raise to opt in to higher per-turn context cost.",
@@ -593,7 +556,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       }
     },
     "attribution": {
-      "description": "Customize attribution text for commits and PRs. Each field defaults to the standard Claude Code attribution if not set.",
+      "description": "Customize attribution text for commits and PRs. Each field defaults to the standard Claude Code attribution if not set. Set to false to hide all attribution, the same as { "commit": "", "pr": "", "sessionUrl": false }. Setting it to true is the same as leaving it out. Older Claude Code versions reject true or false here, so use the object form in settings files shared across versions.",
       "type": "object",
       "properties": {
         "commit": {
@@ -603,9 +566,27 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "pr": {
           "description": "Attribution text for pull request descriptions. Empty string hides attribution.",
           "type": "string"
+        },
+        "sessionUrl": {
+          "description": "Whether to append the claude.ai session link to commits and PRs created from web or Remote Control sessions (default: true). Set to false to omit the Claude-Session trailer and PR-body link.",
+          "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": {}
+    },
+    "attributionProject": {
+      "description": "The claude.ai Project this session names for your organization's usage reports: the Project's UUID, or its ID starting with "claude_proj_". An empty string names none and stops lower-precedence files from naming one; the organization default still applies. Sent only when Claude Code uses your claude.ai login, connects directly to the Anthropic API, is not in a cloud session, and CLAUDE_CODE_ATTRIBUTION_HEADER is not 0. CLAUDE_CODE_ATTRIBUTION_PROJECT takes precedence over it. Set in managed settings, it overrides people's own settings files. A project's .claude/settings.json and settings.local.json count only once the folder is trusted; for runs in a folder nobody has trusted, such as CI, use CLAUDE_CODE_ATTRIBUTION_PROJECT.",
+      "type": "string"
+    },
+    "attributionProjectPolicy": {
+      "description": "Your organization's default for attributionProject. Only honored from managed settings (server-managed, MDM / OS policy, or managed-settings.json); ignored in user, project, local and --settings sources.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "description": "The Project used when neither CLAUDE_CODE_ATTRIBUTION_PROJECT nor attributionProject names one: its UUID, or its ID starting with "claude_proj_".",
+          "type": "string"
+        }
+      }
     },
     "includeCoAuthoredBy": {
       "description": "Deprecated: Use attribution instead. Whether to include Claude's co-authored by attribution in commits and PRs (defaults to true)",
@@ -641,7 +622,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           }
         },
         "defaultMode": {
-          "description": "Default permission mode when Claude Code needs access",
+          "description": "Default permission mode when Claude Code needs access ('manual' is accepted as an alias for 'default')",
           "type": "string",
           "enum": [
             "acceptEdits",
@@ -658,6 +639,22 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "enum": [
             "disable"
           ]
+        },
+        "blockReadsOutsideWorkingDirectories": {
+          "description": "Refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories in every permission mode; true in any settings source wins. No allow rule lifts it. Also set when the user picks "block" on the one-time auto-mode prompt for a read outside the working directories.",
+          "type": "boolean"
+        },
+        "blockWritesOutsideWorkingDirectories": {
+          "description": "Refuse file-tool writes (Write, Edit, NotebookEdit) outside the working directories in every permission mode; true in any settings source wins. No allow rule lifts it. Files that Claude Code keeps for the session are not refused: its plan files, scratchpad and background job folder, and the auto-memory of this project, unless a repository settings file points it elsewhere. Nothing runs them unless the model asks. Also refuses file-tool writes to Claude Code settings files, inside the working directories too, and takes EnterWorktree and ExitWorktree, which move the working directory, out of the tools on offer. Does not limit shell commands, MCP tools, the programs that hooks run, or the memory tools. Cloud sessions (Claude Code on the web), whose file tools run in a container that is itself the boundary, may not apply it.",
+          "type": "boolean"
+        },
+        "blockReadsExemptPaths": {
+          "description": "For the program that starts Claude Code: read only from --settings and from settings that program sends while the session runs; ignored in user, project, local and managed settings. Absolute paths, each a folder with all below it or one file, that blockReadsOutsideWorkingDirectories lets through beside the working directories. It allows nothing: an allow rule, the permission mode or the user still decides each read, as with that setting off, and a shell command that hands such a path to a program is still asked about unless a Read allow rule covers it. The paths do not become working directories, so blockWritesOutsideWorkingDirectories refuses writes to them, and they are not told to MCP servers or to the model. Each path counts as written: a link in it is not followed and a pattern is not expanded, so list every spelling that a read may arrive by. Ignored: an entry that starts with ~, has a ".." segment or has white space at either end (as written or once normalized), a relative or network path, and the root of a filesystem. Does not change what sandboxed commands may read (sandbox.filesystem.allowRead does).",
+          "type": "array",
+          "items": {
+            "default": "",
+            "type": "string"
+          }
         },
         "disableAutoMode": {
           "description": "Disable auto mode",
@@ -681,14 +678,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "string"
     },
     "fallbackModel": {
-      "description": "Fallback model(s) tried in order when the primary model is overloaded or unavailable. Each element accepts a model name or alias; \"default\" expands to the default model. CLI --fallback-model takes precedence.",
+      "description": "Fallback model(s) tried in order when the primary model is overloaded or unavailable. Each element accepts a model name or alias; "default" expands to the default model. CLI --fallback-model takes precedence.",
       "type": "array",
       "items": {
         "type": "string"
       }
     },
     "availableModels": {
-      "description": "Allowlist of models that users can select. Accepts family aliases (\"opus\" allows any opus version), version prefixes (\"opus-4-5\" allows only that version), and full model IDs. If undefined, all models are available. If empty array, only the default model is available. Typically set in managed settings by enterprise administrators.",
+      "description": "Allowlist of models that users can select. Accepts family aliases ("opus" allows any opus version), version prefixes ("opus-4-5" allows that version and any model ID that extends it, so "claude-opus-5" also allows "claude-opus-5-5"), and full model IDs. If undefined, all models are available. If empty array, only the default model is available. Typically set in managed settings by enterprise administrators.",
       "type": "array",
       "items": {
         "type": "string"
@@ -698,14 +695,118 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "description": "When true and availableModels is a non-empty array, the Default model selection is also constrained: if the default model for the user tier is not in availableModels, Default resolves to the first allowed availableModels entry instead. Has no effect when availableModels is unset or an empty array. Typically set in managed settings by enterprise administrators.",
       "type": "boolean"
     },
+    "availableModelsMatch": {
+      "description": "How availableModels entries match model IDs. "prefix" (the default) lets an entry also allow any model ID that extends it, so "claude-opus-5" allows "claude-opus-5-5". "exact" keeps that matching but stops a model ID entry from allowing other versions: "claude-opus-5" allows Opus 5 and its dated and -fast IDs, but not Opus 5.5 or a later release until it is listed, and a -latest ID needs a -latest entry. Family aliases ("opus") still allow the whole family; aliases whose model depends on the release or settings (best, opusplan, default) are ignored. With "exact" and a list that names at least one model, the Default option also uses only a listed model; if none can be used, Claude Code will not start. Haiku background models, and hooks and other helper requests that pick their own model, are not restricted (deniedModels covers them; allowManagedHooksOnly limits hooks). Read from managed settings only.",
+      "type": "string",
+      "enum": [
+        "prefix",
+        "exact"
+      ]
+    },
+    "deniedModels": {
+      "description": "Models users cannot select, even when availableModels allows them. A family alias ("opus") blocks that family. A model ID blocks that version in every spelling: dates, -fast and provider prefixes are ignored, so "claude-opus-5-5" blocks every Opus 5.5 ID but not Opus 5. An ID with no minor version ("claude-opus-5") also blocks later minor versions, as it allows them in availableModels. Aliases whose model depends on the release or settings (best, opusplan, default) are ignored. The Default option steps down past a blocked model; if the Default has no allowed model to step down to, Claude Code will not start. Read from managed settings only.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "modelOverrides": {
-      "description": "Override mapping from Anthropic model ID (e.g. \"claude-opus-4-6\") to provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically set in managed settings by enterprise administrators.",
+      "description": "Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically set in managed settings by enterprise administrators.",
       "type": "object",
       "propertyNames": {
         "type": "string"
       },
       "additionalProperties": {
         "type": "string"
+      }
+    },
+    "modelPicker": {
+      "description": "Curate the /model picker: an ordered list of models with your own labels, independent of the built-in lineup and of Claude Code releases. availableModels still applies to these rows. Honored from managed, --settings/SDK, and user settings only (not from a project checkout); the highest-precedence of those that defines modelPicker wins outright (no merging across sources). Typically set in managed settings by enterprise administrators.",
+      "type": "object",
+      "properties": {
+        "options": {
+          "description": "Rows to show in the /model picker, in order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "description": "Model to select, taken verbatim: an alias ("opus"), an Anthropic model ID, or a provider-format ID (Vertex, Bedrock, gateway). Same values --model accepts.",
+                "type": "string"
+              },
+              "label": {
+                "description": "Row title. Defaults to the model name.",
+                "type": "string"
+              },
+              "description": {
+                "description": "Row subtitle. Defaults to a generic description.",
+                "type": "string"
+              },
+              "behavesAs": {
+                "description": "For a model this version of Claude Code does not know: the ID of a model it does know (e.g. "claude-opus-4-8") whose client-side handling — prompt profile, capability and effort defaults — applies to it. Changes neither the row's label nor the model ID sent. Without it, a model-catalog row for a model this version does not know is not offered until Claude Code is updated.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          }
+        },
+        "replaceBuiltInOptions": {
+          "description": "When true, the picker shows only the Default row and these options — the built-in lineup, gateway-discovered models and ANTHROPIC_CUSTOM_MODEL_OPTION are hidden. When false or unset, these options are added after the built-in lineup.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "options"
+      ]
+    },
+    "modelPricing": {
+      "description": "Price usage at your organization's contracted rates instead of list price. Affects every spend figure Claude Code reports — /cost, the status line, the SDK total_cost_usd, --max-budget-usd, and the OpenTelemetry cost metric and events — which remain USD estimates, not an invoice (the per-Mtok price labels in /model stay at list). "overrides" maps a model ID to its USD-per-million-token rates (input, output, cacheRead, cacheWrite — all four required, each 0 to 10000; cacheWrite prices both 5-minute and 1-hour cache writes). A matching row is charged exactly as written; fast-mode and US-data-residency surcharges are not added on top. A key Claude Code itself uses for a built-in model — its ID such as "claude-sonnet-4-6", or its first-party, Bedrock (any or no region prefix), Vertex or Foundry ID — covers every dated and provider form of that model; any other key — a gateway model alias, or a spelling Claude Code does not itself use — matches that model ID only (case-insensitive), and such an exact match wins over a built-in row. On Bedrock an application inference profile is matched by its backing model. An invalid row or multiplier is reported and skipped; the rest still apply. "multiplier" in (0, 10] scales every computed cost, overridden or not (0.85 = 85% of the price, 1.2 = 120%). Only honored from managed settings (server-managed, MDM / OS policy, or managed-settings.json), or — when none of those sets it — when supplied by a host application that manages the model provider; ignored in user, project, local and --settings sources.",
+      "type": "object",
+      "properties": {
+        "multiplier": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10
+        },
+        "overrides": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "cacheRead": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "cacheWrite": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite"
+            ]
+          }
+        }
       }
     },
     "enableAllProjectMcpServers": {
@@ -726,8 +827,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "type": "string"
       }
     },
+    "disableClaudeAiConnectors": {
+      "description": "When true in any settings source, claude.ai MCP cloud connectors are not auto-fetched or connected, and a claudeai-proxy server passed explicitly (e.g. via --mcp-config or the SDK mcpServers option) does not connect either. Any-source-true wins: a project can opt out, but a project-level false cannot override a user-level true.",
+      "type": "boolean"
+    },
     "skillOverrides": {
-      "description": "Per-skill listing overrides keyed by skill name. \"name-only\" lists the skill without its description; \"user-invocable-only\" hides it from the model but keeps /name; \"off\" hides it from both. Absent = on.",
+      "description": "Per-skill listing overrides keyed by skill name. "name-only" lists the skill without its description; "user-invocable-only" hides it from the model but keeps /name; "off" hides it from both. Absent = on.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -746,8 +851,22 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "description": "Disable the skills and workflows that ship with Claude Code: bundled skills and workflows are removed entirely; built-in slash commands stay typable but are hidden from the model. Plugins, .claude/skills/, and .claude/commands/ are unaffected. Equivalent to CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1.",
       "type": "boolean"
     },
+    "managedMcpServers": {
+      "description": "MCP servers the organization provides to every user, keyed by server name, each with the .mcp.json entry shape; only "http" and "sse" servers are accepted (nothing that names a program to run, no ${VAR} references). Honored from managed settings only; users cannot remove them, deniedMcpServers still applies, and they need no allowedMcpServers entry. Not read in Claude Desktop's Code tab on a third-party deployment or in Cowork sessions, where Claude Desktop supplies and locks the session's MCP servers itself.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
     "allowedMcpServers": {
-      "description": "Enterprise allowlist of MCP servers that can be used. Applies to all scopes including enterprise servers from managed-mcp.json. If undefined, all servers are allowed. If empty array, no servers are allowed. Denylist takes precedence - if a server is on both lists, it is denied.",
+      "description": "Enterprise allowlist of the MCP servers users may use. Governs servers users add (user, project and local config, --mcp-config, agent frontmatter, plugins, claude.ai connectors); servers the organization itself delivers (managedMcpServers, and managed-mcp.json entries with no ${VAR} in their command, args, url or header values) are allowed without being listed; a managed-mcp.json entry with ${VAR} in any of those must match this list. If undefined, all servers are allowed. If empty array, users can use no servers of their own. Denylist takes precedence - if a server is on both lists, it is denied.",
       "type": "array",
       "items": {
         "type": "object",
@@ -766,11 +885,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             }
           },
           "serverUrl": {
-            "description": "URL pattern with wildcard support (e.g., \"https://*.example.com/*\") for allowed remote MCP servers",
+            "description": "URL pattern with wildcard support (e.g., "https://*.example.com/*") for allowed remote MCP servers",
             "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       }
     },
     "deniedMcpServers": {
@@ -782,7 +900,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "serverName": {
             "description": "Name of the MCP server that is explicitly blocked",
             "type": "string",
-            "pattern": "^[a-zA-Z0-9_-]+$"
+            "minLength": 1
           },
           "serverCommand": {
             "description": "Command array [command, ...args] to match exactly for blocked stdio servers",
@@ -793,56 +911,51 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             }
           },
           "serverUrl": {
-            "description": "URL pattern with wildcard support (e.g., \"https://*.example.com/*\") for blocked remote MCP servers",
+            "description": "URL pattern with wildcard support (e.g., "https://*.example.com/*") for blocked remote MCP servers",
             "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       }
     },
     "hooks": {
       "description": "Custom commands to run before/after tool executions",
       "type": "object",
       "propertyNames": {
-        "anyOf": [
-          {
-            "type": "string",
-            "enum": [
-              "PreToolUse",
-              "PostToolUse",
-              "PostToolUseFailure",
-              "PostToolBatch",
-              "Notification",
-              "UserPromptSubmit",
-              "UserPromptExpansion",
-              "SessionStart",
-              "SessionEnd",
-              "Stop",
-              "StopFailure",
-              "SubagentStart",
-              "SubagentStop",
-              "PreCompact",
-              "PostCompact",
-              "PermissionRequest",
-              "PermissionDenied",
-              "Setup",
-              "TeammateIdle",
-              "TaskCreated",
-              "TaskCompleted",
-              "Elicitation",
-              "ElicitationResult",
-              "ConfigChange",
-              "WorktreeCreate",
-              "WorktreeRemove",
-              "InstructionsLoaded",
-              "CwdChanged",
-              "FileChanged",
-              "MessageDisplay"
-            ]
-          },
-          {
-            "not": {}
-          }
+        "type": "string",
+        "enum": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PostToolBatch",
+          "Notification",
+          "UserPromptSubmit",
+          "UserPromptExpansion",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PreCompact",
+          "PostCompact",
+          "PreModelSwitch",
+          "PostModelSwitch",
+          "PermissionRequest",
+          "PermissionDenied",
+          "Setup",
+          "TeammateIdle",
+          "TaskCreated",
+          "TaskCompleted",
+          "Elicitation",
+          "ElicitationResult",
+          "ConfigChange",
+          "WorktreeCreate",
+          "WorktreeRemove",
+          "InstructionsLoaded",
+          "CwdChanged",
+          "FileChanged",
+          "DirectoryAdded",
+          "MessageDisplay"
         ]
       },
       "additionalProperties": {
@@ -851,7 +964,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "type": "object",
           "properties": {
             "matcher": {
-              "description": "String pattern to match (e.g. tool names like \"Write\")",
+              "description": "String pattern to match (e.g. tool names like "Write")",
               "type": "string"
             },
             "hooks": {
@@ -879,7 +992,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         }
                       },
                       "if": {
-                        "description": "Permission rule syntax to filter when this hook runs (e.g., \"Bash(git *)\"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
+                        "description": "Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
                         "type": "string"
                       },
                       "shell": {
@@ -894,6 +1007,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "description": "Timeout in seconds for this specific command",
                         "type": "number",
                         "exclusiveMinimum": 0
+                      },
+                      "onFailure": {
+                        "description": "What a failure of this hook does: it could not start (a missing script or plugin directory), timed out, exited with a code other than 0 or 2, or printed JSON that is invalid or fails validation. 'continue' (default): the failure is reported and the action goes ahead. 'block': the failure counts as exit code 2, so the action the event guards (a tool call, a permission request, a prompt) is blocked. Ignored for async hooks and on Stop, SubagentStop, TaskCompleted and TeammateIdle.",
+                        "type": "string",
+                        "enum": [
+                          "continue",
+                          "block"
+                        ]
                       },
                       "statusMessage": {
                         "description": "Custom status message to display in spinner while hook runs",
@@ -910,23 +1031,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                       "asyncRewake": {
                         "description": "If true, hook runs in background and wakes the model on exit code 2 (blocking error). Implies async.",
                         "type": "boolean"
-                      },
-                      "rewakeMessage": {
-                        "description": "@internal Custom prefix for the system-reminder shown to the model when an asyncRewake hook exits with code 2. The hook output is appended after this prefix.",
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "rewakeSummary": {
-                        "description": "@internal One-line summary shown to the user in the terminal when an asyncRewake hook exits with code 2. Defaults to \"Stop hook feedback\".",
-                        "type": "string",
-                        "minLength": 1
                       }
                     },
                     "required": [
                       "type",
                       "command"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -941,7 +1051,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "type": "string"
                       },
                       "if": {
-                        "description": "Permission rule syntax to filter when this hook runs (e.g., \"Bash(git *)\"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
+                        "description": "Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
                         "type": "string"
                       },
                       "timeout": {
@@ -950,11 +1060,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "exclusiveMinimum": 0
                       },
                       "model": {
-                        "description": "Model to use for this prompt hook (e.g., \"claude-sonnet-4-6\"). If not specified, uses the default small fast model.",
+                        "description": "Model to use for this prompt hook (e.g., "claude-sonnet-5"). If not specified, uses the default small fast model.",
                         "type": "string"
                       },
                       "continueOnBlock": {
-                        "description": "Sets the continue value for the decision:\"block\" produced when ok is false. Default false (turn ends). Whether continue:true lets the turn proceed depends on the event's decision:\"block\" semantics. On PostToolUse, the reason is fed back to Claude and the turn continues.",
+                        "description": "Sets the continue value for the decision:"block" produced when ok is false. Default false (turn ends). Whether continue:true lets the turn proceed depends on the event's decision:"block" semantics. On PostToolUse, the reason is fed back to Claude and the turn continues.",
                         "type": "boolean"
                       },
                       "statusMessage": {
@@ -969,8 +1079,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "required": [
                       "type",
                       "prompt"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -981,11 +1090,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "const": "agent"
                       },
                       "prompt": {
-                        "description": "Prompt describing what to verify (e.g. \"Verify that unit tests ran and passed.\"). Use $ARGUMENTS placeholder for hook input JSON.",
+                        "description": "Prompt describing what to verify (e.g. "Verify that unit tests ran and passed."). Use $ARGUMENTS placeholder for hook input JSON.",
                         "type": "string"
                       },
                       "if": {
-                        "description": "Permission rule syntax to filter when this hook runs (e.g., \"Bash(git *)\"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
+                        "description": "Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
                         "type": "string"
                       },
                       "timeout": {
@@ -994,7 +1103,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "exclusiveMinimum": 0
                       },
                       "model": {
-                        "description": "Model to use for this agent hook (e.g., \"claude-sonnet-4-6\"). If not specified, uses Haiku.",
+                        "description": "Model to use for this agent hook (e.g., "claude-sonnet-5"). If not specified, uses Haiku.",
                         "type": "string"
                       },
                       "statusMessage": {
@@ -1009,8 +1118,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "required": [
                       "type",
                       "prompt"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1026,7 +1134,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "format": "uri"
                       },
                       "if": {
-                        "description": "Permission rule syntax to filter when this hook runs (e.g., \"Bash(git *)\"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
+                        "description": "Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
                         "type": "string"
                       },
                       "timeout": {
@@ -1034,8 +1142,16 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
+                      "onFailure": {
+                        "description": "What a failure of this hook does: it could not start (a missing script or plugin directory), timed out, exited with a code other than 0 or 2, or printed JSON that is invalid or fails validation. 'continue' (default): the failure is reported and the action goes ahead. 'block': the failure counts as exit code 2, so the action the event guards (a tool call, a permission request, a prompt) is blocked. Ignored for async hooks and on Stop, SubagentStop, TaskCompleted and TeammateIdle.",
+                        "type": "string",
+                        "enum": [
+                          "continue",
+                          "block"
+                        ]
+                      },
                       "headers": {
-                        "description": "Additional headers to include in the request. Values may reference environment variables using $VAR_NAME or ${VAR_NAME} syntax (e.g., \"Authorization\": \"Bearer $MY_TOKEN\"). Only variables listed in allowedEnvVars will be interpolated.",
+                        "description": "Additional headers to include in the request. Values may reference environment variables using $VAR_NAME or ${VAR_NAME} syntax (e.g., "Authorization": "Bearer $MY_TOKEN"). Only variables listed in allowedEnvVars will be interpolated.",
                         "type": "object",
                         "propertyNames": {
                           "type": "string"
@@ -1063,8 +1179,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "required": [
                       "type",
                       "url"
-                    ],
-                    "additionalProperties": false
+                    ]
                   },
                   {
                     "type": "object",
@@ -1083,7 +1198,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "type": "string"
                       },
                       "input": {
-                        "description": "Arguments passed to the MCP tool. String values support ${path} interpolation from the hook input JSON (e.g. \"${tool_input.file_path}\").",
+                        "description": "Arguments passed to the MCP tool. String values support ${path} interpolation from the hook input JSON (e.g. "${tool_input.file_path}").",
                         "type": "object",
                         "propertyNames": {
                           "type": "string"
@@ -1091,7 +1206,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         "additionalProperties": {}
                       },
                       "if": {
-                        "description": "Permission rule syntax to filter when this hook runs (e.g., \"Bash(git *)\"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
+                        "description": "Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.",
                         "type": "string"
                       },
                       "timeout": {
@@ -1112,8 +1227,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                       "type",
                       "server",
                       "tool"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 ]
               }
@@ -1121,17 +1235,16 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           },
           "required": [
             "hooks"
-          ],
-          "additionalProperties": false
+          ]
         }
       }
     },
     "worktree": {
-      "description": "Git worktree configuration for --worktree flag.",
+      "description": "Git worktree configuration: the CLI --worktree flag, EnterWorktree and agent isolation, plus the location Claude Code Desktop uses for SSH-session worktrees on this machine.",
       "type": "object",
       "properties": {
         "symlinkDirectories": {
-          "description": "Directories to symlink from main repository to worktrees to avoid disk bloat. Must be explicitly configured - no directories are symlinked by default. Common examples: \"node_modules\", \".cache\", \".bin\"",
+          "description": "Directories to symlink from main repository to worktrees to avoid disk bloat. Must be explicitly configured - no directories are symlinked by default. Common examples: "node_modules", ".cache", ".bin"",
           "type": "array",
           "items": {
             "type": "string"
@@ -1159,12 +1272,15 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "worktree",
             "none"
           ]
+        },
+        "location": {
+          "description": "Directory under which Claude Code Desktop creates the worktrees of SSH sessions that run on this machine (an absolute path or one starting with ~/), instead of <project>/.claude/worktrees. Read by the desktop app from the SSH host user settings; a location chosen in the desktop app's SSH connection settings takes precedence. The CLI (--worktree, EnterWorktree, agent isolation) does not read it yet.",
+          "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "disableAllHooks": {
-      "description": "Disable all hooks and statusLine execution",
+      "description": "Disable all hooks and statusLine execution: the hooks defined in settings files and by installed plugins. Features built into Claude Code are not hooks in this sense and keep working; each has its own switch.",
       "type": "boolean"
     },
     "disableAgentView": {
@@ -1176,19 +1292,33 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "boolean"
     },
     "disableWorkflows": {
-      "description": "Disable the Workflows feature (also via CLAUDE_CODE_DISABLE_WORKFLOWS).",
+      "description": "Disable the Workflows feature. Code Review on pull requests and /ultrareview run in Anthropic's cloud and are not stopped by this setting, except an /ultrareview that has to restart partway through. A machine that runs a review itself refuses it when that machine's own administrator set this, or CLAUDE_CODE_DISABLE_WORKFLOWS in an `env` block, in its managed settings (MDM, the managed-settings file or an administrator's policy helper). Set in the environment before Claude Code starts, CLAUDE_CODE_DISABLE_WORKFLOWS disables Workflows. Beyond the cases above it stops a review only when the review's own session starts with it set.",
       "type": "boolean"
     },
     "disableArtifact": {
-      "description": "Disable the Artifact tool (also via CLAUDE_CODE_DISABLE_ARTIFACT).",
+      "description": "Deprecated: use enableArtifact: false. Still honored — true disables the Artifact tool; false is ignored.",
+      "type": "boolean"
+    },
+    "enableArtifact": {
+      "description": "Turn the Artifact tool on or off. Off in any of managed, --settings, or user settings wins; project and local settings can only turn it off. Unset defaults to on once the feature is available.",
       "type": "boolean"
     },
     "enableWorkflows": {
       "description": "Enable or disable the Workflows feature for this user. Unset = default by plan once the feature is available.",
       "type": "boolean"
     },
+    "workflowSizeGuideline": {
+      "description": "Advisory size guideline for the dynamic workflows Claude writes: "small" aims for fewer than 5 agents, "medium" fewer than 10, "large" fewer than 50, and "unrestricted" sends no guideline. Unset defaults to "medium", or "small" on Pro plans. A value here — including from managed settings — takes precedence over the "Dynamic workflow size" choice in /config, and that /config row is hidden while a settings file provides the key. This is a guideline, not an enforced limit.",
+      "type": "string",
+      "enum": [
+        "unrestricted",
+        "small",
+        "medium",
+        "large"
+      ]
+    },
     "workflowKeywordTriggerEnabled": {
-      "description": "Enable the \"ultracode\" keyword trigger: including the keyword in a prompt opts that turn into the Workflow tool. Set to false to disable the trigger. Default: true.",
+      "description": "Enable the "ultracode" keyword trigger: including the keyword in a prompt opts that turn into the Workflow tool. Set to false to disable the trigger. Default: true.",
       "type": "boolean"
     },
     "disableSkillShellExecution": {
@@ -1203,12 +1333,32 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "powershell"
       ]
     },
+    "bashEditDiffEnabled": {
+      "description": "Whether the Bash tool shows a diff of the files a Bash command changed (PostToolUse Bash hooks get the changed-file list in tool_response). Set to false to turn that off. Default: off, except in auto and bypassPermissions modes when the Bash tool handles file edits or the model's configuration turns it on. Only user, flag or policy settings can turn it on in other modes.",
+      "type": "boolean"
+    },
+    "bashOutputMaxChars": {
+      "description": "How many characters of a successful Bash or PowerShell command's output Claude receives inline (default 30000; values clamp to 4000-128000). Output past this is saved to a file and Claude receives a short preview plus the path. When set, this also replaces BASH_MAX_OUTPUT_LENGTH, which on its own only sizes the read-back window.",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "taskOutputMaxChars": {
+      "description": "Deprecated: no longer has any effect (the TaskOutput tool was removed). Read a background task's output file with the Read tool instead.",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "respondToBashCommands": {
+      "description": "Whether Claude responds after an input-box ! bash command runs. Set to false to add the command output to context without a response. Default: true.",
+      "type": "boolean"
+    },
     "allowManagedHooksOnly": {
-      "description": "When true (and set in managed settings), only hooks from managed settings run. User, project, and local hooks are ignored.",
+      "description": "When true (and set in managed settings), only hooks from managed settings and from plugins that managed settings enable run. User, project, and local hooks and the hooks of plugins the user installed are ignored. Features built into Claude Code are not hooks in this sense and keep working.",
       "type": "boolean"
     },
     "allowedHttpHookUrls": {
-      "description": "Allowlist of URL patterns that HTTP hooks may target. Supports * as a wildcard (e.g. \"https://hooks.example.com/*\"). When set, HTTP hooks with non-matching URLs are blocked. If undefined, all URLs are allowed. If empty array, no HTTP hooks are allowed. Arrays merge across settings sources (same semantics as allowedMcpServers).",
+      "description": "Allowlist of URL patterns that HTTP hooks may target. Supports * as a wildcard (e.g. "https://hooks.example.com/*"). When set, HTTP hooks with non-matching URLs are blocked. If undefined, all URLs are allowed. If empty array, no HTTP hooks are allowed. Arrays merge across settings sources (same semantics as allowedMcpServers).",
       "type": "array",
       "items": {
         "type": "string"
@@ -1222,7 +1372,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       }
     },
     "allowManagedPermissionRulesOnly": {
-      "description": "When true (and set in managed settings), only permission rules (allow/deny/ask) from managed settings are respected. User, project, local, and CLI argument permission rules are ignored.",
+      "description": "When true (and set in managed settings), permission rules from user, project, local, and --settings files and allow rules from --allowedTools are ignored; only managed settings can add allow rules through settings. The allowed-tools frontmatter of skills and custom commands from user, project, and --add-dir sources, and of plugins no managed setting vouches for, is ignored too. Plugins keep theirs only on an admin-backed channel: host-delivered --plugin-dir plugins (in Claude Desktop, only while this is not set by the organization's own managed settings), the official marketplace registered from its unpinned anthropics source, claude.ai-synced plugins Anthropic attests, the saved login organization's claude.ai-hosted marketplaces, marketplaces whose registered source managed extraKnownMarketplaces declares or an exact or owner-pinned (owner/*) strictKnownMarketplaces entry names at the path it pins (an npm marketplace source only when the registration and the declared entry pin the same registry, and a settings marketplace source only when every nested npm plugin entry pins one on a bare package name — unpinned, the package resolves through the member's own npm config, and a non-bare spelling packs as an exotic spec the pin does not bind, so nothing an entry names is what was fetched), and npm-direct (package@npm) plugins whose recorded resolution a registry-pinned managed npm strictKnownMarketplaces entry names (host and path patterns and enabledPlugins ids do not vouch); managed and bundled skills keep theirs. --disallowedTools, skill disallowed-tools, and other deny and ask rules from the command line or the current session still apply.",
       "type": "boolean"
     },
     "allowManagedMcpServersOnly": {
@@ -1233,8 +1383,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "description": "When true (and set in managed settings), claude.ai cloud MCP connectors load alongside managed-mcp.json instead of being suppressed by its exclusive-control lockdown. Default off preserves the lockdown. Read from managed settings only.",
       "type": "boolean"
     },
+    "allowClaudeInChromeWithManagedMcp": {
+      "description": "When true (and set in device managed settings: MDM, the managed-settings.json file, or a policy helper those configure), the built-in Claude in Chrome MCP server can run alongside managed-mcp.json instead of being blocked by its exclusive-control lockdown. deniedMcpServers and the organization's Claude in Chrome setting still block it. Default off preserves the lockdown.",
+      "type": "boolean"
+    },
     "strictPluginOnlyCustomization": {
-      "description": "When set in managed settings, blocks non-plugin customization sources for the listed surfaces. Array form locks specific surfaces (e.g. [\"skills\", \"hooks\"]); `true` locks all four; `false` is an explicit no-op. Blocked: ~/.claude/{surface}/, .claude/{surface}/ (project), settings.json hooks, .mcp.json. NOT blocked: managed (policySettings) sources, plugin-provided customizations. Composes with strictKnownMarketplaces for end-to-end admin control — plugins gated by marketplace allowlist, everything else blocked here.",
+      "description": "When set in managed settings, blocks non-plugin customization sources for the listed surfaces. Array form locks specific surfaces (e.g. ["skills", "hooks"]); `true` locks all four; `false` is an explicit no-op. Blocked: ~/.claude/{surface}/, .claude/{surface}/ (project), settings.json hooks, .mcp.json. NOT blocked: managed (policySettings) sources, plugin-provided customizations. Composes with strictKnownMarketplaces for end-to-end admin control — plugins gated by marketplace allowlist, everything else blocked here.",
       "anyOf": [
         {
           "type": "boolean"
@@ -1280,15 +1434,63 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "required": [
         "type",
         "command"
-      ],
-      "additionalProperties": false
+      ]
     },
     "prUrlTemplate": {
-      "description": "URL template for PR links in the footer link badges and inline messages. The detected git PR is rendered as the first footer-link badge. Placeholders: {host} {owner} {repo} {number} {url}. Example: \"https://reviews.example.com/{owner}/{repo}/pull/{number}\"",
+      "description": "URL template for PR links in the footer link badges and inline messages. The detected git PR is rendered as the first footer-link badge. Placeholders: {host} {owner} {repo} {number} {url}. Example: "https://reviews.example.com/{owner}/{repo}/pull/{number}"",
       "type": "string"
     },
     "footerLinksRegexes": {
-      "description": "Extra clickable footer badges that appear when a regex matches turn output (tool results and assistant responses). Read from user, flag, and managed settings only; ignored in project .claude/settings.json and local .claude/settings.local.json. At most 5 badges render; the oldest is displaced by newer matches and /clear removes them. Use to surface IDs printed by project CLIs as session links."
+      "description": "Extra clickable footer badges that appear when a regex matches turn output (tool results and assistant responses). Read from user, flag, and managed settings only; ignored in project .claude/settings.json and local .claude/settings.local.json. At most 5 badges render; the oldest is displaced by newer matches and /clear removes them. Use to surface IDs printed by project CLIs as session links.",
+      "type": "array",
+      "items": {
+        "default": {
+          "type": "invalid-entry-stripped"
+        },
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "description": "Config variant. This client understands "regex": matches turn output and builds a URL from named capture groups. Entries with other variants are preserved but skipped at runtime.",
+                "type": "string",
+                "const": "regex"
+              },
+              "pattern": {
+                "description": "Regex matched against turn output (tool results and assistant text)",
+                "type": "string"
+              },
+              "url": {
+                "description": "Link target. {name} placeholders are filled from named regex capture groups, e.g. (?<id>...) -> {id}. Values are URL-encoded; the origin must be literal in the template. The scheme must be https, http, or a recognized editor or workspace deep-link scheme: vscode, vscode-insiders, cursor, windsurf, zed, jetbrains, idea, slack, linear, notion, figma.",
+                "type": "string"
+              },
+              "label": {
+                "description": "Badge text. {name} placeholders filled from named capture groups; defaults to the full match.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "pattern",
+              "url"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "description": "Config variant discriminator for entries this client does not understand; the entry is preserved as-is and skipped at runtime.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
     },
     "subagentStatusLine": {
       "description": "Custom per-subagent status line shown in the agent panel; receives row context as JSON on stdin",
@@ -1305,11 +1507,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "required": [
         "type",
         "command"
-      ],
-      "additionalProperties": false
+      ]
     },
     "enabledPlugins": {
-      "description": "Enabled plugins using plugin-id@marketplace-id format. Example: { \"formatter@anthropic-tools\": true }. Also supports extended format with version constraints. Settings precedence is user < project < local < flag < policy, so to disable a plugin that project settings enable, set it to false in .claude/settings.local.json — setting false in ~/.claude/settings.json is overridden by the project.",
+      "description": "Enabled plugins using plugin-id@marketplace-id format. Example: { "formatter@anthropic-tools": true }. Also supports extended format with version constraints. Settings precedence is user < project < local < flag < policy, so to disable a plugin that project settings enable, set it to false in .claude/settings.local.json — setting false in ~/.claude/settings.json is overridden by the project.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -1329,6 +1530,20 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "not": {}
           }
         ]
+      }
+    },
+    "prependPlugins": {
+      "description": "Managed plugins (plugin@marketplace ids that managed enabledPlugins sets true) whose hooks run first, outermost, in the listed order: the first id listed sees every event before any other plugin and every result after it. Managed plugins not listed here or in appendPlugins follow the listed ones; user, project and marketplace plugins come after those; then appendPlugins; then the built-in plugins. The bundled cc-plugin-sec-default@builtin seats itself outermost (on a machine with managed settings and for Team and Enterprise organizations) unless this list is set, in which case list it where it should sit or leave it out. Name it there as sec-default@builtin, the id every release reads, for as long as any machine in the organization may run a release from before its rename; a release that knows the new id reads either. Any other id that is not an enabled managed plugin is skipped; an id listed in both keys is prepended. Only honored from managed settings (or, on a machine with none, from user settings for your own plugins); ignored in project, local and --settings sources.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "appendPlugins": {
+      "description": "Managed plugins (plugin@marketplace ids that managed enabledPlugins sets true) whose hooks run last among plugins, innermost, in the listed order: the last id listed sits just above the built-in plugins and sees each event as every other plugin left it. Only honored from managed settings (or, on a machine with none, from user settings for your own plugins); ignored in project, local and --settings sources.",
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
     "extraKnownMarketplaces": {
@@ -1364,13 +1579,17 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "headersHelper": {
+                    "description": "Command that prints a JSON object of HTTP headers (e.g. a short-lived auth token). Its output overrides `headers` and, like `headers`, is inherited by same-origin archive downloads from this marketplace. Runs from a fixed directory (the Claude config home, never the session's), so give a bare command found via PATH or an absolute path; it is re-run on later refreshes of this marketplace.",
+                    "type": "string",
+                    "maxLength": 500
                   }
                 },
                 "required": [
                   "source",
                   "url"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1380,11 +1599,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "const": "github"
                   },
                   "repo": {
-                    "description": "GitHub repository in owner/repo format",
+                    "description": "GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.",
                     "type": "string"
                   },
                   "ref": {
-                    "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                    "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                     "type": "string"
                   },
                   "path": {
@@ -1392,22 +1611,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "type": "string"
                   },
                   "sparsePaths": {
-                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                     "type": "array",
                     "items": {
                       "type": "string"
                     }
                   },
                   "skipLfs": {
-                    "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                    "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                     "type": "boolean"
                   }
                 },
                 "required": [
                   "source",
                   "repo"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1421,7 +1639,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "type": "string"
                   },
                   "ref": {
-                    "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                    "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                     "type": "string"
                   },
                   "path": {
@@ -1429,22 +1647,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "type": "string"
                   },
                   "sparsePaths": {
-                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                     "type": "array",
                     "items": {
                       "type": "string"
                     }
                   },
                   "skipLfs": {
-                    "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                    "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                     "type": "boolean"
                   }
                 },
                 "required": [
                   "source",
                   "url"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1454,15 +1671,31 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "const": "npm"
                   },
                   "package": {
-                    "description": "NPM package containing marketplace.json",
+                    "description": "npm package containing marketplace.json (e.g. "@acme/claude-marketplace"). In strictKnownMarketplaces / blockedMarketplaces an entry also governs plugins installed straight from the npm marketplace (`<package>@npm`): an exact package name matches that package, and "@acme/*" matches every package under the scope.",
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": '^@[a-z0-9][a-z0-9-._]*\/\*$'
+                      }
+                    ]
+                  },
+                  "version": {
+                    "description": "Version or range to fetch (e.g. "1.4.0", "^1.4"); defaults to the latest dist-tag",
                     "type": "string"
+                  },
+                  "registry": {
+                    "description": "Registry URL. When adding a marketplace: a one-off registry override (otherwise your npm configuration decides). In a policy entry: the origin and path prefix the package's RESOLVED tarball URL must fall under (e.g. "https://npm.example.com/api/npm/internal/"); under allowManagedPermissionRulesOnly, an npm marketplace keeps plugin allowed-tools only when both the entry and the registration pin this same registry.",
+                    "type": "string",
+                    "format": "uri"
                   }
                 },
                 "required": [
                   "source",
                   "package"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1479,8 +1712,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "required": [
                   "source",
                   "path"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1497,8 +1729,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "required": [
                   "source",
                   "path"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "description": "Policy-list sentinel for the ~/.claude/skills/ auto-load (@skills-dir plugins). In strictKnownMarketplaces: opt the scan back IN (by default any allowlist blocks it). In blockedMarketplaces: turn the scan OFF without otherwise restricting marketplaces. Only meaningful in those two managed-settings lists (areLocalPluginDirsAllowedByPolicy); known_marketplaces.json / marketplace add etc. ignore it.",
@@ -1511,8 +1742,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 },
                 "required": [
                   "source"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1522,15 +1752,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "const": "hostPattern"
                   },
                   "hostPattern": {
-                    "description": "Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against \"github.com\". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., \"^github\\.mycompany\\.com$\").",
+                    "description": 'Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").',
                     "type": "string"
                   }
                 },
                 "required": [
                   "source",
                   "hostPattern"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
@@ -1540,15 +1769,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     "const": "pathPattern"
                   },
                   "pathPattern": {
-                    "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use \".*\" to allow all filesystem paths, or a narrower pattern (e.g., \"^/opt/approved/\") to restrict to specific directories.",
+                    "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.",
                     "type": "string"
                   }
                 },
                 "required": [
                   "source",
                   "pathPattern"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "description": "Inline marketplace manifest defined directly in settings.json. The reconciler writes a synthetic marketplace.json to the cache; diffMarketplaces detects edits via isEqual on the stored source (the plugins array is inside this object, so edits surface as sourceChanged).",
@@ -1575,12 +1803,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "minLength": 1
                         },
                         "source": {
-                          "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.",
+                          "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against. Under allowManagedPermissionRulesOnly, a settings marketplace keeps its plugins' allowed-tools only when every npm entry here pins a `registry` on a bare package name; unpinned, the package resolves through the member's own npm config, and a non-bare spelling (an `npm:` alias, a `name@range`, a URL or git spec) packs as an exotic spec the pin does not bind — either way the marketplace vouches no tool grants.",
                           "anyOf": [
                             {
                               "description": "Path to the plugin root, relative to the marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)",
                               "type": "string",
-                              "pattern": "^\\.\\/.*"
+                              "pattern": '^\.\/.*'
                             },
                             {
                               "description": "NPM package as plugin source",
@@ -1614,8 +1842,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "required": [
                                 "source",
                                 "package"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
                             {
                               "type": "object",
@@ -1629,7 +1856,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                                   "type": "string"
                                 },
                                 "ref": {
-                                  "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                                   "type": "string"
                                 },
                                 "sha": {
@@ -1643,8 +1870,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "required": [
                                 "source",
                                 "url"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
                             {
                               "type": "object",
@@ -1658,7 +1884,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                                   "type": "string"
                                 },
                                 "ref": {
-                                  "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                                   "type": "string"
                                 },
                                 "sha": {
@@ -1672,8 +1898,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "required": [
                                 "source",
                                 "repo"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
                             {
                               "description": "Plugin located in a subdirectory of a larger repository (monorepo). Only the specified subdirectory is materialized; the rest of the repo is not downloaded.",
@@ -1688,12 +1913,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                                   "type": "string"
                                 },
                                 "path": {
-                                  "description": "Subdirectory within the repo containing the plugin (e.g., \"tools/claude-plugin\"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.",
+                                  "description": "Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Checked out sparsely — over https or ssh as a partial clone (--filter=tree:0) — to minimize bandwidth for monorepos.",
                                   "type": "string",
                                   "minLength": 1
                                 },
                                 "ref": {
-                                  "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                                   "type": "string"
                                 },
                                 "sha": {
@@ -1708,22 +1933,81 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                                 "source",
                                 "url",
                                 "path"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
                             {
-                              "description": "Placeholder for source types this Claude Code version does not recognize. Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with a clear \"update Claude Code\" message.",
+                              "description": "Plugin distributed as a zip archive fetched over HTTPS — for hosting on any static file server or artifact repository (S3, GitLab, nginx) with no git or npm on the client. Authentication: the entry's own `headers` / `headersHelper` (bound to this URL), overlaid on the enclosing url-source marketplace's headers (static or `headersHelper`-minted) when the archive shares its origin.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "archive"
+                                },
+                                "url": {
+                                  "description": "HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.",
+                                  "type": "string",
+                                  "format": "uri"
+                                },
+                                "sha256": {
+                                  "description": "SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.",
+                                  "type": "string",
+                                  "pattern": "^[0-9a-fA-F]{64}$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "url"
+                              ]
+                            },
+                            {
+                              "description": "Plugin directory produced by a locally installed tool (e.g. an IDE that renders its plugin for the currently selected SDK). Claude Code runs the command, copies the directory it prints, and re-runs it in the background at startup to pick up changes.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "command"
+                                },
+                                "command": {
+                                  "description": "Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.",
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 500
+                                },
+                                "timeout": {
+                                  "description": "Seconds to wait for the command before giving up (default: 60)",
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 600
+                                },
+                                "mode": {
+                                  "description": "copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.",
+                                  "type": "string",
+                                  "enum": [
+                                    "copy",
+                                    "link"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "command"
+                              ]
+                            },
+                            {
+                              "description": "Placeholder for source types this Claude Code version does not recognize, or a known type whose fields failed validation (then `error` holds the reason). Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with an actionable message.",
                               "type": "object",
                               "properties": {
                                 "source": {
                                   "type": "string",
                                   "const": "unsupported"
+                                },
+                                "error": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
                                 "source"
-                              ],
-                              "additionalProperties": false
+                              ]
                             }
                           ]
                         },
@@ -1735,13 +2019,27 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                         },
                         "strict": {
                           "type": "boolean"
+                        },
+                        "headers": {
+                          "description": "HTTP headers sent when downloading this entry's `archive` source.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "headersHelper": {
+                          "description": "Command that prints a JSON object of HTTP headers for downloading this entry's `archive` source. Runs only when a user explicitly installs or updates this plugin. Unlike a catalog entry, an entry written here does not need `strict: false`: it is declared in a settings file, which has no manifest fields to inline. A declaration in project settings is not operator-authored, so request-routing and client-identity header names are still filtered there. Use an absolute path.",
+                          "type": "string",
+                          "maxLength": 500
                         }
                       },
                       "required": [
                         "name",
                         "source"
-                      ],
-                      "additionalProperties": false
+                      ]
                     }
                   },
                   "owner": {
@@ -1763,16 +2061,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     },
                     "required": [
                       "name"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 },
                 "required": [
                   "source",
                   "name",
                   "plugins"
-                ],
-                "additionalProperties": false
+                ]
               }
             ]
           },
@@ -1783,16 +2079,583 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "autoUpdate": {
             "description": "Whether to automatically update this marketplace and its installed plugins on startup",
             "type": "boolean"
+          },
+          "pluginDigests": {
+            "description": "Managed settings only: the plugins of this marketplace that an organization delivers with its own tier, by plugin name, each with the digests of its releases. A plugin also enabled and listed in prependPlugins or appendPlugins by managed settings the session vouches for loads its hooks module only from a folder that proves one of them, and is then seated in that tier; any other copy does not load. A digest is sha256- and the base64 SHA-256 of, for every regular file in the folder in UTF-16 code unit order of its path, not normalized, "f PATH" NUL BYTE-LENGTH NUL BYTES, with / in paths; .git, .in_use, .orphaned_at, .claude-plugin-link and .links_materialized at the root are left out. The plugin keeps its manifest at .claude-plugin/plugin.json and names one module in hooks/hooks.json. A string of any other form, or a list that is empty or of any other shape, matches no folder. A symbolic link, or a surface module, proves nothing. A proved plugin ships bundled with no install step: the digest covers the whole folder, node_modules included. A checkout whose line endings were converted proves nothing.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "required": [
           "source"
-        ],
-        "additionalProperties": false
+        ]
+      }
+    },
+    "additionalMarketplaces": {
+      "description": "Alias for extraKnownMarketplaces: this key is read exactly as if it were spelled extraKnownMarketplaces. Do not set both in one file — if both appear, this key is ignored with a warning. Claude Code may rewrite this key as extraKnownMarketplaces when it updates the file. Clients older than this alias ignore it, so prefer extraKnownMarketplaces while older Claude Code versions still share the same settings.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "Where to fetch the marketplace from",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "url"
+                  },
+                  "url": {
+                    "description": "Direct URL to marketplace.json file",
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "headers": {
+                    "description": "Custom HTTP headers (e.g., for authentication)",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "headersHelper": {
+                    "description": "Command that prints a JSON object of HTTP headers (e.g. a short-lived auth token). Its output overrides `headers` and, like `headers`, is inherited by same-origin archive downloads from this marketplace. Runs from a fixed directory (the Claude config home, never the session's), so give a bare command found via PATH or an absolute path; it is re-run on later refreshes of this marketplace.",
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "source",
+                  "url"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "github"
+                  },
+                  "repo": {
+                    "description": "GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.",
+                    "type": "string"
+                  },
+                  "ref": {
+                    "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)",
+                    "type": "string"
+                  },
+                  "sparsePaths": {
+                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "skipLfs": {
+                    "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "source",
+                  "repo"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "git"
+                  },
+                  "url": {
+                    "description": "Full git repository URL",
+                    "type": "string"
+                  },
+                  "ref": {
+                    "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)",
+                    "type": "string"
+                  },
+                  "sparsePaths": {
+                    "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "skipLfs": {
+                    "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "source",
+                  "url"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "npm"
+                  },
+                  "package": {
+                    "description": "npm package containing marketplace.json (e.g. "@acme/claude-marketplace"). In strictKnownMarketplaces / blockedMarketplaces an entry also governs plugins installed straight from the npm marketplace (`<package>@npm`): an exact package name matches that package, and "@acme/*" matches every package under the scope.",
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": '^@[a-z0-9][a-z0-9-._]*\/\*$'
+                      }
+                    ]
+                  },
+                  "version": {
+                    "description": "Version or range to fetch (e.g. "1.4.0", "^1.4"); defaults to the latest dist-tag",
+                    "type": "string"
+                  },
+                  "registry": {
+                    "description": "Registry URL. When adding a marketplace: a one-off registry override (otherwise your npm configuration decides). In a policy entry: the origin and path prefix the package's RESOLVED tarball URL must fall under (e.g. "https://npm.example.com/api/npm/internal/"); under allowManagedPermissionRulesOnly, an npm marketplace keeps plugin allowed-tools only when both the entry and the registration pin this same registry.",
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "source",
+                  "package"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "file"
+                  },
+                  "path": {
+                    "description": "Local file path to marketplace.json",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "directory"
+                  },
+                  "path": {
+                    "description": "Local directory containing .claude-plugin/marketplace.json",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "path"
+                ]
+              },
+              {
+                "description": "Policy-list sentinel for the ~/.claude/skills/ auto-load (@skills-dir plugins). In strictKnownMarketplaces: opt the scan back IN (by default any allowlist blocks it). In blockedMarketplaces: turn the scan OFF without otherwise restricting marketplaces. Only meaningful in those two managed-settings lists (areLocalPluginDirsAllowedByPolicy); known_marketplaces.json / marketplace add etc. ignore it.",
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "skills-dir"
+                  }
+                },
+                "required": [
+                  "source"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "hostPattern"
+                  },
+                  "hostPattern": {
+                    "description": 'Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").',
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "hostPattern"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "pathPattern"
+                  },
+                  "pathPattern": {
+                    "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "pathPattern"
+                ]
+              },
+              {
+                "description": "Inline marketplace manifest defined directly in settings.json. The reconciler writes a synthetic marketplace.json to the cache; diffMarketplaces detects edits via isEqual on the stored source (the plugins array is inside this object, so edits surface as sourceChanged).",
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "settings"
+                  },
+                  "name": {
+                    "description": "Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "plugins": {
+                    "description": "Plugin entries declared inline in settings.json",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "description": "Plugin name as it appears in the target repository",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "source": {
+                          "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against. Under allowManagedPermissionRulesOnly, a settings marketplace keeps its plugins' allowed-tools only when every npm entry here pins a `registry` on a bare package name; unpinned, the package resolves through the member's own npm config, and a non-bare spelling (an `npm:` alias, a `name@range`, a URL or git spec) packs as an exotic spec the pin does not bind — either way the marketplace vouches no tool grants.",
+                          "anyOf": [
+                            {
+                              "description": "Path to the plugin root, relative to the marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)",
+                              "type": "string",
+                              "pattern": '^\.\/.*'
+                            },
+                            {
+                              "description": "NPM package as plugin source",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "npm"
+                                },
+                                "package": {
+                                  "description": "Package name (or url, or local path, or anything else that can be passed to `npm` as a package)",
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "version": {
+                                  "description": "Specific version or version range (e.g., ^1.0.0, ~2.1.0)",
+                                  "type": "string"
+                                },
+                                "registry": {
+                                  "description": "Custom NPM registry URL (defaults to using system default, likely npmjs.org)",
+                                  "type": "string",
+                                  "format": "uri"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "package"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "url"
+                                },
+                                "url": {
+                                  "description": "Full git repository URL (https:// or git@)",
+                                  "type": "string"
+                                },
+                                "ref": {
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                                  "type": "string"
+                                },
+                                "sha": {
+                                  "description": "Specific commit SHA to use",
+                                  "type": "string",
+                                  "minLength": 40,
+                                  "maxLength": 40,
+                                  "pattern": "^[a-f0-9]{40}$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "url"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "github"
+                                },
+                                "repo": {
+                                  "description": "GitHub repository in owner/repo format",
+                                  "type": "string"
+                                },
+                                "ref": {
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                                  "type": "string"
+                                },
+                                "sha": {
+                                  "description": "Specific commit SHA to use",
+                                  "type": "string",
+                                  "minLength": 40,
+                                  "maxLength": 40,
+                                  "pattern": "^[a-f0-9]{40}$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "repo"
+                              ]
+                            },
+                            {
+                              "description": "Plugin located in a subdirectory of a larger repository (monorepo). Only the specified subdirectory is materialized; the rest of the repo is not downloaded.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "git-subdir"
+                                },
+                                "url": {
+                                  "description": "Git repository: GitHub owner/repo shorthand, https://, or git@ URL",
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "description": "Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Checked out sparsely — over https or ssh as a partial clone (--filter=tree:0) — to minimize bandwidth for monorepos.",
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "ref": {
+                                  "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                                  "type": "string"
+                                },
+                                "sha": {
+                                  "description": "Specific commit SHA to use",
+                                  "type": "string",
+                                  "minLength": 40,
+                                  "maxLength": 40,
+                                  "pattern": "^[a-f0-9]{40}$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "url",
+                                "path"
+                              ]
+                            },
+                            {
+                              "description": "Plugin distributed as a zip archive fetched over HTTPS — for hosting on any static file server or artifact repository (S3, GitLab, nginx) with no git or npm on the client. Authentication: the entry's own `headers` / `headersHelper` (bound to this URL), overlaid on the enclosing url-source marketplace's headers (static or `headersHelper`-minted) when the archive shares its origin.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "archive"
+                                },
+                                "url": {
+                                  "description": "HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.",
+                                  "type": "string",
+                                  "format": "uri"
+                                },
+                                "sha256": {
+                                  "description": "SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.",
+                                  "type": "string",
+                                  "pattern": "^[0-9a-fA-F]{64}$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "url"
+                              ]
+                            },
+                            {
+                              "description": "Plugin directory produced by a locally installed tool (e.g. an IDE that renders its plugin for the currently selected SDK). Claude Code runs the command, copies the directory it prints, and re-runs it in the background at startup to pick up changes.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "command"
+                                },
+                                "command": {
+                                  "description": "Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.",
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 500
+                                },
+                                "timeout": {
+                                  "description": "Seconds to wait for the command before giving up (default: 60)",
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 600
+                                },
+                                "mode": {
+                                  "description": "copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.",
+                                  "type": "string",
+                                  "enum": [
+                                    "copy",
+                                    "link"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "command"
+                              ]
+                            },
+                            {
+                              "description": "Placeholder for source types this Claude Code version does not recognize, or a known type whose fields failed validation (then `error` holds the reason). Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with an actionable message.",
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "unsupported"
+                                },
+                                "error": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "source"
+                              ]
+                            }
+                          ]
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "strict": {
+                          "type": "boolean"
+                        },
+                        "headers": {
+                          "description": "HTTP headers sent when downloading this entry's `archive` source.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "headersHelper": {
+                          "description": "Command that prints a JSON object of HTTP headers for downloading this entry's `archive` source. Runs only when a user explicitly installs or updates this plugin. Unlike a catalog entry, an entry written here does not need `strict: false`: it is declared in a settings file, which has no manifest fields to inline. A declaration in project settings is not operator-authored, so request-routing and client-identity header names are still filtered there. Use an absolute path.",
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "source"
+                      ]
+                    }
+                  },
+                  "owner": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "description": "Display name of the plugin author or organization",
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "email": {
+                        "description": "Contact email for support or feedback",
+                        "type": "string"
+                      },
+                      "url": {
+                        "description": "Website, GitHub profile, or organization URL",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                },
+                "required": [
+                  "source",
+                  "name",
+                  "plugins"
+                ]
+              }
+            ]
+          },
+          "installLocation": {
+            "description": "Local cache path where marketplace manifest is stored (auto-generated if not provided)",
+            "type": "string"
+          },
+          "autoUpdate": {
+            "description": "Whether to automatically update this marketplace and its installed plugins on startup",
+            "type": "boolean"
+          },
+          "pluginDigests": {
+            "description": "Managed settings only: the plugins of this marketplace that an organization delivers with its own tier, by plugin name, each with the digests of its releases. A plugin also enabled and listed in prependPlugins or appendPlugins by managed settings the session vouches for loads its hooks module only from a folder that proves one of them, and is then seated in that tier; any other copy does not load. A digest is sha256- and the base64 SHA-256 of, for every regular file in the folder in UTF-16 code unit order of its path, not normalized, "f PATH" NUL BYTE-LENGTH NUL BYTES, with / in paths; .git, .in_use, .orphaned_at, .claude-plugin-link and .links_materialized at the root are left out. The plugin keeps its manifest at .claude-plugin/plugin.json and names one module in hooks/hooks.json. A string of any other form, or a list that is empty or of any other shape, matches no folder. A symbolic link, or a surface module, proves nothing. A proved plugin ships bundled with no install step: the digest covers the whole folder, node_modules included. A checkout whose line endings were converted proves nothing.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "source"
+        ]
       }
     },
     "strictKnownMarketplaces": {
-      "description": "Enterprise strict list of allowed marketplace sources. When set in managed settings, ONLY these exact sources can be added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem. Note: this is a policy gate only — it does NOT register marketplaces. To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.",
+      "description": "Enterprise strict list of allowed marketplace sources. When set in managed settings, ONLY these sources can be added as marketplaces. Entries match exactly, except that a github entry may use the owner-wildcard form {"source":"github","repo":"owner/*"} to allow every repository under that owner. The check happens BEFORE downloading, so blocked sources never touch the filesystem. Note: this is a policy gate only — it does NOT register marketplaces. To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.",
       "type": "array",
       "items": {
         "anyOf": [
@@ -1817,13 +2680,17 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "headersHelper": {
+                "description": "Command that prints a JSON object of HTTP headers (e.g. a short-lived auth token). Its output overrides `headers` and, like `headers`, is inherited by same-origin archive downloads from this marketplace. Runs from a fixed directory (the Claude config home, never the session's), so give a bare command found via PATH or an absolute path; it is re-run on later refreshes of this marketplace.",
+                "type": "string",
+                "maxLength": 500
               }
             },
             "required": [
               "source",
               "url"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1833,11 +2700,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "github"
               },
               "repo": {
-                "description": "GitHub repository in owner/repo format",
+                "description": "GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.",
                 "type": "string"
               },
               "ref": {
-                "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                 "type": "string"
               },
               "path": {
@@ -1845,22 +2712,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "sparsePaths": {
-                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               },
               "skipLfs": {
-                "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                 "type": "boolean"
               }
             },
             "required": [
               "source",
               "repo"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1874,7 +2740,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "ref": {
-                "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                 "type": "string"
               },
               "path": {
@@ -1882,22 +2748,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "sparsePaths": {
-                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               },
               "skipLfs": {
-                "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                 "type": "boolean"
               }
             },
             "required": [
               "source",
               "url"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1907,15 +2772,31 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "npm"
               },
               "package": {
-                "description": "NPM package containing marketplace.json",
+                "description": "npm package containing marketplace.json (e.g. "@acme/claude-marketplace"). In strictKnownMarketplaces / blockedMarketplaces an entry also governs plugins installed straight from the npm marketplace (`<package>@npm`): an exact package name matches that package, and "@acme/*" matches every package under the scope.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": '^@[a-z0-9][a-z0-9-._]*\/\*$'
+                  }
+                ]
+              },
+              "version": {
+                "description": "Version or range to fetch (e.g. "1.4.0", "^1.4"); defaults to the latest dist-tag",
                 "type": "string"
+              },
+              "registry": {
+                "description": "Registry URL. When adding a marketplace: a one-off registry override (otherwise your npm configuration decides). In a policy entry: the origin and path prefix the package's RESOLVED tarball URL must fall under (e.g. "https://npm.example.com/api/npm/internal/"); under allowManagedPermissionRulesOnly, an npm marketplace keeps plugin allowed-tools only when both the entry and the registration pin this same registry.",
+                "type": "string",
+                "format": "uri"
               }
             },
             "required": [
               "source",
               "package"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1932,8 +2813,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "required": [
               "source",
               "path"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1950,8 +2830,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "required": [
               "source",
               "path"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "description": "Policy-list sentinel for the ~/.claude/skills/ auto-load (@skills-dir plugins). In strictKnownMarketplaces: opt the scan back IN (by default any allowlist blocks it). In blockedMarketplaces: turn the scan OFF without otherwise restricting marketplaces. Only meaningful in those two managed-settings lists (areLocalPluginDirsAllowedByPolicy); known_marketplaces.json / marketplace add etc. ignore it.",
@@ -1964,8 +2843,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             },
             "required": [
               "source"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1975,15 +2853,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "hostPattern"
               },
               "hostPattern": {
-                "description": "Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against \"github.com\". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., \"^github\\.mycompany\\.com$\").",
+                "description": 'Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").',
                 "type": "string"
               }
             },
             "required": [
               "source",
               "hostPattern"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -1993,15 +2870,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "pathPattern"
               },
               "pathPattern": {
-                "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use \".*\" to allow all filesystem paths, or a narrower pattern (e.g., \"^/opt/approved/\") to restrict to specific directories.",
+                "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.",
                 "type": "string"
               }
             },
             "required": [
               "source",
               "pathPattern"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "description": "Inline marketplace manifest defined directly in settings.json. The reconciler writes a synthetic marketplace.json to the cache; diffMarketplaces detects edits via isEqual on the stored source (the plugins array is inside this object, so edits surface as sourceChanged).",
@@ -2012,7 +2888,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "settings"
               },
               "name": {
-                "description": "Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.",
+                "description": "Marketplace name, as stored in known_marketplaces.json. A reserved name is refused per entry at load (revalidateReservedNameEntry); a look-alike name is judged when that marketplace's own catalog is parsed (catalogNameSchemaFor).",
                 "type": "string",
                 "minLength": 1
               },
@@ -2028,12 +2904,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                       "minLength": 1
                     },
                     "source": {
-                      "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.",
+                      "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against. Under allowManagedPermissionRulesOnly, a settings marketplace keeps its plugins' allowed-tools only when every npm entry here pins a `registry` on a bare package name; unpinned, the package resolves through the member's own npm config, and a non-bare spelling (an `npm:` alias, a `name@range`, a URL or git spec) packs as an exotic spec the pin does not bind — either way the marketplace vouches no tool grants.",
                       "anyOf": [
                         {
                           "description": "Path to the plugin root, relative to the marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)",
                           "type": "string",
-                          "pattern": "^\\.\\/.*"
+                          "pattern": '^\.\/.*'
                         },
                         {
                           "description": "NPM package as plugin source",
@@ -2067,8 +2943,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "package"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "type": "object",
@@ -2082,7 +2957,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2096,8 +2971,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "url"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "type": "object",
@@ -2111,7 +2985,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2125,8 +2999,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "repo"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "description": "Plugin located in a subdirectory of a larger repository (monorepo). Only the specified subdirectory is materialized; the rest of the repo is not downloaded.",
@@ -2141,12 +3014,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "path": {
-                              "description": "Subdirectory within the repo containing the plugin (e.g., \"tools/claude-plugin\"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.",
+                              "description": "Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Checked out sparsely — over https or ssh as a partial clone (--filter=tree:0) — to minimize bandwidth for monorepos.",
                               "type": "string",
                               "minLength": 1
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2161,22 +3034,81 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                             "source",
                             "url",
                             "path"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
-                          "description": "Placeholder for source types this Claude Code version does not recognize. Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with a clear \"update Claude Code\" message.",
+                          "description": "Plugin distributed as a zip archive fetched over HTTPS — for hosting on any static file server or artifact repository (S3, GitLab, nginx) with no git or npm on the client. Authentication: the entry's own `headers` / `headersHelper` (bound to this URL), overlaid on the enclosing url-source marketplace's headers (static or `headersHelper`-minted) when the archive shares its origin.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "archive"
+                            },
+                            "url": {
+                              "description": "HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.",
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "sha256": {
+                              "description": "SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.",
+                              "type": "string",
+                              "pattern": "^[0-9a-fA-F]{64}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "url"
+                          ]
+                        },
+                        {
+                          "description": "Plugin directory produced by a locally installed tool (e.g. an IDE that renders its plugin for the currently selected SDK). Claude Code runs the command, copies the directory it prints, and re-runs it in the background at startup to pick up changes.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "command"
+                            },
+                            "command": {
+                              "description": "Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "timeout": {
+                              "description": "Seconds to wait for the command before giving up (default: 60)",
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 600
+                            },
+                            "mode": {
+                              "description": "copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.",
+                              "type": "string",
+                              "enum": [
+                                "copy",
+                                "link"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "command"
+                          ]
+                        },
+                        {
+                          "description": "Placeholder for source types this Claude Code version does not recognize, or a known type whose fields failed validation (then `error` holds the reason). Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with an actionable message.",
                           "type": "object",
                           "properties": {
                             "source": {
                               "type": "string",
                               "const": "unsupported"
+                            },
+                            "error": {
+                              "type": "string"
                             }
                           },
                           "required": [
                             "source"
-                          ],
-                          "additionalProperties": false
+                          ]
                         }
                       ]
                     },
@@ -2188,13 +3120,27 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     },
                     "strict": {
                       "type": "boolean"
+                    },
+                    "headers": {
+                      "description": "HTTP headers sent when downloading this entry's `archive` source.",
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "headersHelper": {
+                      "description": "Command that prints a JSON object of HTTP headers for downloading this entry's `archive` source. Runs only when a user explicitly installs or updates this plugin. Unlike a catalog entry, an entry written here does not need `strict: false`: it is declared in a settings file, which has no manifest fields to inline. A declaration in project settings is not operator-authored, so request-routing and client-identity header names are still filtered there. Use an absolute path.",
+                      "type": "string",
+                      "maxLength": 500
                     }
                   },
                   "required": [
                     "name",
                     "source"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "owner": {
@@ -2216,22 +3162,540 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 },
                 "required": [
                   "name"
-                ],
-                "additionalProperties": false
+                ]
               }
             },
             "required": [
               "source",
               "name",
               "plugins"
-            ],
-            "additionalProperties": false
+            ]
+          }
+        ]
+      }
+    },
+    "allowedMarketplaces": {
+      "description": "Alias for strictKnownMarketplaces (managed settings only): this key is read exactly as if it were spelled strictKnownMarketplaces. Do not set both in one file — if both appear, this key is ignored with a warning. Clients older than this alias ignore it, so keep using strictKnownMarketplaces when the allowlist must also bind older Claude Code versions.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "url"
+              },
+              "url": {
+                "description": "Direct URL to marketplace.json file",
+                "type": "string",
+                "format": "uri"
+              },
+              "headers": {
+                "description": "Custom HTTP headers (e.g., for authentication)",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "headersHelper": {
+                "description": "Command that prints a JSON object of HTTP headers (e.g. a short-lived auth token). Its output overrides `headers` and, like `headers`, is inherited by same-origin archive downloads from this marketplace. Runs from a fixed directory (the Claude config home, never the session's), so give a bare command found via PATH or an absolute path; it is re-run on later refreshes of this marketplace.",
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "source",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "github"
+              },
+              "repo": {
+                "description": "GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.",
+                "type": "string"
+              },
+              "ref": {
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                "type": "string"
+              },
+              "path": {
+                "description": "Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)",
+                "type": "string"
+              },
+              "sparsePaths": {
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "skipLfs": {
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source",
+              "repo"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "git"
+              },
+              "url": {
+                "description": "Full git repository URL",
+                "type": "string"
+              },
+              "ref": {
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                "type": "string"
+              },
+              "path": {
+                "description": "Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)",
+                "type": "string"
+              },
+              "sparsePaths": {
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "skipLfs": {
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "npm"
+              },
+              "package": {
+                "description": "npm package containing marketplace.json (e.g. "@acme/claude-marketplace"). In strictKnownMarketplaces / blockedMarketplaces an entry also governs plugins installed straight from the npm marketplace (`<package>@npm`): an exact package name matches that package, and "@acme/*" matches every package under the scope.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": '^@[a-z0-9][a-z0-9-._]*\/\*$'
+                  }
+                ]
+              },
+              "version": {
+                "description": "Version or range to fetch (e.g. "1.4.0", "^1.4"); defaults to the latest dist-tag",
+                "type": "string"
+              },
+              "registry": {
+                "description": "Registry URL. When adding a marketplace: a one-off registry override (otherwise your npm configuration decides). In a policy entry: the origin and path prefix the package's RESOLVED tarball URL must fall under (e.g. "https://npm.example.com/api/npm/internal/"); under allowManagedPermissionRulesOnly, an npm marketplace keeps plugin allowed-tools only when both the entry and the registration pin this same registry.",
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "source",
+              "package"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "file"
+              },
+              "path": {
+                "description": "Local file path to marketplace.json",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "directory"
+              },
+              "path": {
+                "description": "Local directory containing .claude-plugin/marketplace.json",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "path"
+            ]
+          },
+          {
+            "description": "Policy-list sentinel for the ~/.claude/skills/ auto-load (@skills-dir plugins). In strictKnownMarketplaces: opt the scan back IN (by default any allowlist blocks it). In blockedMarketplaces: turn the scan OFF without otherwise restricting marketplaces. Only meaningful in those two managed-settings lists (areLocalPluginDirsAllowedByPolicy); known_marketplaces.json / marketplace add etc. ignore it.",
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "skills-dir"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "hostPattern"
+              },
+              "hostPattern": {
+                "description": 'Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").',
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "hostPattern"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "pathPattern"
+              },
+              "pathPattern": {
+                "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "pathPattern"
+            ]
+          },
+          {
+            "description": "Inline marketplace manifest defined directly in settings.json. The reconciler writes a synthetic marketplace.json to the cache; diffMarketplaces detects edits via isEqual on the stored source (the plugins array is inside this object, so edits surface as sourceChanged).",
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "settings"
+              },
+              "name": {
+                "description": "Marketplace name, as stored in known_marketplaces.json. A reserved name is refused per entry at load (revalidateReservedNameEntry); a look-alike name is judged when that marketplace's own catalog is parsed (catalogNameSchemaFor).",
+                "type": "string",
+                "minLength": 1
+              },
+              "plugins": {
+                "description": "Plugin entries declared inline in settings.json",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "description": "Plugin name as it appears in the target repository",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "source": {
+                      "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against. Under allowManagedPermissionRulesOnly, a settings marketplace keeps its plugins' allowed-tools only when every npm entry here pins a `registry` on a bare package name; unpinned, the package resolves through the member's own npm config, and a non-bare spelling (an `npm:` alias, a `name@range`, a URL or git spec) packs as an exotic spec the pin does not bind — either way the marketplace vouches no tool grants.",
+                      "anyOf": [
+                        {
+                          "description": "Path to the plugin root, relative to the marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)",
+                          "type": "string",
+                          "pattern": '^\.\/.*'
+                        },
+                        {
+                          "description": "NPM package as plugin source",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "npm"
+                            },
+                            "package": {
+                              "description": "Package name (or url, or local path, or anything else that can be passed to `npm` as a package)",
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "version": {
+                              "description": "Specific version or version range (e.g., ^1.0.0, ~2.1.0)",
+                              "type": "string"
+                            },
+                            "registry": {
+                              "description": "Custom NPM registry URL (defaults to using system default, likely npmjs.org)",
+                              "type": "string",
+                              "format": "uri"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "package"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "url"
+                            },
+                            "url": {
+                              "description": "Full git repository URL (https:// or git@)",
+                              "type": "string"
+                            },
+                            "ref": {
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                              "type": "string"
+                            },
+                            "sha": {
+                              "description": "Specific commit SHA to use",
+                              "type": "string",
+                              "minLength": 40,
+                              "maxLength": 40,
+                              "pattern": "^[a-f0-9]{40}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "url"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "github"
+                            },
+                            "repo": {
+                              "description": "GitHub repository in owner/repo format",
+                              "type": "string"
+                            },
+                            "ref": {
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                              "type": "string"
+                            },
+                            "sha": {
+                              "description": "Specific commit SHA to use",
+                              "type": "string",
+                              "minLength": 40,
+                              "maxLength": 40,
+                              "pattern": "^[a-f0-9]{40}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "repo"
+                          ]
+                        },
+                        {
+                          "description": "Plugin located in a subdirectory of a larger repository (monorepo). Only the specified subdirectory is materialized; the rest of the repo is not downloaded.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "git-subdir"
+                            },
+                            "url": {
+                              "description": "Git repository: GitHub owner/repo shorthand, https://, or git@ URL",
+                              "type": "string"
+                            },
+                            "path": {
+                              "description": "Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Checked out sparsely — over https or ssh as a partial clone (--filter=tree:0) — to minimize bandwidth for monorepos.",
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "ref": {
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
+                              "type": "string"
+                            },
+                            "sha": {
+                              "description": "Specific commit SHA to use",
+                              "type": "string",
+                              "minLength": 40,
+                              "maxLength": 40,
+                              "pattern": "^[a-f0-9]{40}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "url",
+                            "path"
+                          ]
+                        },
+                        {
+                          "description": "Plugin distributed as a zip archive fetched over HTTPS — for hosting on any static file server or artifact repository (S3, GitLab, nginx) with no git or npm on the client. Authentication: the entry's own `headers` / `headersHelper` (bound to this URL), overlaid on the enclosing url-source marketplace's headers (static or `headersHelper`-minted) when the archive shares its origin.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "archive"
+                            },
+                            "url": {
+                              "description": "HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.",
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "sha256": {
+                              "description": "SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.",
+                              "type": "string",
+                              "pattern": "^[0-9a-fA-F]{64}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "url"
+                          ]
+                        },
+                        {
+                          "description": "Plugin directory produced by a locally installed tool (e.g. an IDE that renders its plugin for the currently selected SDK). Claude Code runs the command, copies the directory it prints, and re-runs it in the background at startup to pick up changes.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "command"
+                            },
+                            "command": {
+                              "description": "Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "timeout": {
+                              "description": "Seconds to wait for the command before giving up (default: 60)",
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 600
+                            },
+                            "mode": {
+                              "description": "copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.",
+                              "type": "string",
+                              "enum": [
+                                "copy",
+                                "link"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "command"
+                          ]
+                        },
+                        {
+                          "description": "Placeholder for source types this Claude Code version does not recognize, or a known type whose fields failed validation (then `error` holds the reason). Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with an actionable message.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "unsupported"
+                            },
+                            "error": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "source"
+                          ]
+                        }
+                      ]
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "strict": {
+                      "type": "boolean"
+                    },
+                    "headers": {
+                      "description": "HTTP headers sent when downloading this entry's `archive` source.",
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "headersHelper": {
+                      "description": "Command that prints a JSON object of HTTP headers for downloading this entry's `archive` source. Runs only when a user explicitly installs or updates this plugin. Unlike a catalog entry, an entry written here does not need `strict: false`: it is declared in a settings file, which has no manifest fields to inline. A declaration in project settings is not operator-authored, so request-routing and client-identity header names are still filtered there. Use an absolute path.",
+                      "type": "string",
+                      "maxLength": 500
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "source"
+                  ]
+                }
+              },
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "Display name of the plugin author or organization",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "email": {
+                    "description": "Contact email for support or feedback",
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "Website, GitHub profile, or organization URL",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "name",
+              "plugins"
+            ]
           }
         ]
       }
     },
     "blockedMarketplaces": {
-      "description": "Enterprise blocklist of marketplace sources. When set in managed settings, these exact sources are blocked from being added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem.",
+      "description": "Enterprise blocklist of marketplace sources. When set in managed settings, these sources are blocked from being added as marketplaces. Entries match exactly, except that a github entry may use the owner-wildcard form {"source":"github","repo":"owner/*"} to block every repository under that owner. The check happens BEFORE downloading, so blocked sources never touch the filesystem.",
       "type": "array",
       "items": {
         "anyOf": [
@@ -2256,13 +3720,17 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "headersHelper": {
+                "description": "Command that prints a JSON object of HTTP headers (e.g. a short-lived auth token). Its output overrides `headers` and, like `headers`, is inherited by same-origin archive downloads from this marketplace. Runs from a fixed directory (the Claude config home, never the session's), so give a bare command found via PATH or an absolute path; it is re-run on later refreshes of this marketplace.",
+                "type": "string",
+                "maxLength": 500
               }
             },
             "required": [
               "source",
               "url"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2272,11 +3740,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "github"
               },
               "repo": {
-                "description": "GitHub repository in owner/repo format",
+                "description": "GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.",
                 "type": "string"
               },
               "ref": {
-                "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                 "type": "string"
               },
               "path": {
@@ -2284,22 +3752,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "sparsePaths": {
-                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               },
               "skipLfs": {
-                "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                 "type": "boolean"
               }
             },
             "required": [
               "source",
               "repo"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2313,7 +3780,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "ref": {
-                "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                 "type": "string"
               },
               "path": {
@@ -2321,22 +3788,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               },
               "sparsePaths": {
-                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [\".claude-plugin\", \"plugins\"]. If omitted, the full repository is cloned.",
+                "description": "Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.",
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               },
               "skipLfs": {
-                "description": "Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.",
+                "description": "Has no effect; accepted so existing settings keep working. Claude Code's own git never downloads Git LFS content: LFS-tracked files in the marketplace repository are checked out as pointer files whether or not this is set, and adding or updating the marketplace says how many were. To fetch their content, run `git lfs pull` in the marketplace's checkout under ~/.claude/plugins/marketplaces/.",
                 "type": "boolean"
               }
             },
             "required": [
               "source",
               "url"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2346,15 +3812,31 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "npm"
               },
               "package": {
-                "description": "NPM package containing marketplace.json",
+                "description": "npm package containing marketplace.json (e.g. "@acme/claude-marketplace"). In strictKnownMarketplaces / blockedMarketplaces an entry also governs plugins installed straight from the npm marketplace (`<package>@npm`): an exact package name matches that package, and "@acme/*" matches every package under the scope.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": '^@[a-z0-9][a-z0-9-._]*\/\*$'
+                  }
+                ]
+              },
+              "version": {
+                "description": "Version or range to fetch (e.g. "1.4.0", "^1.4"); defaults to the latest dist-tag",
                 "type": "string"
+              },
+              "registry": {
+                "description": "Registry URL. When adding a marketplace: a one-off registry override (otherwise your npm configuration decides). In a policy entry: the origin and path prefix the package's RESOLVED tarball URL must fall under (e.g. "https://npm.example.com/api/npm/internal/"); under allowManagedPermissionRulesOnly, an npm marketplace keeps plugin allowed-tools only when both the entry and the registration pin this same registry.",
+                "type": "string",
+                "format": "uri"
               }
             },
             "required": [
               "source",
               "package"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2371,8 +3853,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "required": [
               "source",
               "path"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2389,8 +3870,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "required": [
               "source",
               "path"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "description": "Policy-list sentinel for the ~/.claude/skills/ auto-load (@skills-dir plugins). In strictKnownMarketplaces: opt the scan back IN (by default any allowlist blocks it). In blockedMarketplaces: turn the scan OFF without otherwise restricting marketplaces. Only meaningful in those two managed-settings lists (areLocalPluginDirsAllowedByPolicy); known_marketplaces.json / marketplace add etc. ignore it.",
@@ -2403,8 +3883,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             },
             "required": [
               "source"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2414,15 +3893,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "hostPattern"
               },
               "hostPattern": {
-                "description": "Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against \"github.com\". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., \"^github\\.mycompany\\.com$\").",
+                "description": 'Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").',
                 "type": "string"
               }
             },
             "required": [
               "source",
               "hostPattern"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "type": "object",
@@ -2432,15 +3910,14 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "pathPattern"
               },
               "pathPattern": {
-                "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use \".*\" to allow all filesystem paths, or a narrower pattern (e.g., \"^/opt/approved/\") to restrict to specific directories.",
+                "description": "Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.",
                 "type": "string"
               }
             },
             "required": [
               "source",
               "pathPattern"
-            ],
-            "additionalProperties": false
+            ]
           },
           {
             "description": "Inline marketplace manifest defined directly in settings.json. The reconciler writes a synthetic marketplace.json to the cache; diffMarketplaces detects edits via isEqual on the stored source (the plugins array is inside this object, so edits surface as sourceChanged).",
@@ -2451,7 +3928,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "const": "settings"
               },
               "name": {
-                "description": "Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.",
+                "description": "Marketplace name, as stored in known_marketplaces.json. A reserved name is refused per entry at load (revalidateReservedNameEntry); a look-alike name is judged when that marketplace's own catalog is parsed (catalogNameSchemaFor).",
                 "type": "string",
                 "minLength": 1
               },
@@ -2467,12 +3944,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                       "minLength": 1
                     },
                     "source": {
-                      "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.",
+                      "description": "Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against. Under allowManagedPermissionRulesOnly, a settings marketplace keeps its plugins' allowed-tools only when every npm entry here pins a `registry` on a bare package name; unpinned, the package resolves through the member's own npm config, and a non-bare spelling (an `npm:` alias, a `name@range`, a URL or git spec) packs as an exotic spec the pin does not bind — either way the marketplace vouches no tool grants.",
                       "anyOf": [
                         {
                           "description": "Path to the plugin root, relative to the marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)",
                           "type": "string",
-                          "pattern": "^\\.\\/.*"
+                          "pattern": '^\.\/.*'
                         },
                         {
                           "description": "NPM package as plugin source",
@@ -2506,8 +3983,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "package"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "type": "object",
@@ -2521,7 +3997,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2535,8 +4011,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "url"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "type": "object",
@@ -2550,7 +4025,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2564,8 +4039,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                           "required": [
                             "source",
                             "repo"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
                           "description": "Plugin located in a subdirectory of a larger repository (monorepo). Only the specified subdirectory is materialized; the rest of the repo is not downloaded.",
@@ -2580,12 +4054,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                               "type": "string"
                             },
                             "path": {
-                              "description": "Subdirectory within the repo containing the plugin (e.g., \"tools/claude-plugin\"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.",
+                              "description": "Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Checked out sparsely — over https or ssh as a partial clone (--filter=tree:0) — to minimize bandwidth for monorepos.",
                               "type": "string",
                               "minLength": 1
                             },
                             "ref": {
-                              "description": "Git branch or tag to use (e.g., \"main\", \"v1.0.0\"). Defaults to repository default branch.",
+                              "description": "Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.",
                               "type": "string"
                             },
                             "sha": {
@@ -2600,22 +4074,81 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                             "source",
                             "url",
                             "path"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         {
-                          "description": "Placeholder for source types this Claude Code version does not recognize. Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with a clear \"update Claude Code\" message.",
+                          "description": "Plugin distributed as a zip archive fetched over HTTPS — for hosting on any static file server or artifact repository (S3, GitLab, nginx) with no git or npm on the client. Authentication: the entry's own `headers` / `headersHelper` (bound to this URL), overlaid on the enclosing url-source marketplace's headers (static or `headersHelper`-minted) when the archive shares its origin.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "archive"
+                            },
+                            "url": {
+                              "description": "HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.",
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "sha256": {
+                              "description": "SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.",
+                              "type": "string",
+                              "pattern": "^[0-9a-fA-F]{64}$"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "url"
+                          ]
+                        },
+                        {
+                          "description": "Plugin directory produced by a locally installed tool (e.g. an IDE that renders its plugin for the currently selected SDK). Claude Code runs the command, copies the directory it prints, and re-runs it in the background at startup to pick up changes.",
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "const": "command"
+                            },
+                            "command": {
+                              "description": "Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "timeout": {
+                              "description": "Seconds to wait for the command before giving up (default: 60)",
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 600
+                            },
+                            "mode": {
+                              "description": "copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.",
+                              "type": "string",
+                              "enum": [
+                                "copy",
+                                "link"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "command"
+                          ]
+                        },
+                        {
+                          "description": "Placeholder for source types this Claude Code version does not recognize, or a known type whose fields failed validation (then `error` holds the reason). Never authored by hand — PluginMarketplaceSchema rewrites unparseable sources to this so the entry remains in marketplace.plugins (detectDelistedPlugins must not see it as removed). Install attempts fail at cachePlugin with an actionable message.",
                           "type": "object",
                           "properties": {
                             "source": {
                               "type": "string",
                               "const": "unsupported"
+                            },
+                            "error": {
+                              "type": "string"
                             }
                           },
                           "required": [
                             "source"
-                          ],
-                          "additionalProperties": false
+                          ]
                         }
                       ]
                     },
@@ -2627,13 +4160,27 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                     },
                     "strict": {
                       "type": "boolean"
+                    },
+                    "headers": {
+                      "description": "HTTP headers sent when downloading this entry's `archive` source.",
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "headersHelper": {
+                      "description": "Command that prints a JSON object of HTTP headers for downloading this entry's `archive` source. Runs only when a user explicitly installs or updates this plugin. Unlike a catalog entry, an entry written here does not need `strict: false`: it is declared in a settings file, which has no manifest fields to inline. A declaration in project settings is not operator-authored, so request-routing and client-identity header names are still filtered there. Use an absolute path.",
+                      "type": "string",
+                      "maxLength": 500
                     }
                   },
                   "required": [
                     "name",
                     "source"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "owner": {
@@ -2655,19 +4202,25 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 },
                 "required": [
                   "name"
-                ],
-                "additionalProperties": false
+                ]
               }
             },
             "required": [
               "source",
               "name",
               "plugins"
-            ],
-            "additionalProperties": false
+            ]
           }
         ]
       }
+    },
+    "disableCommandPluginSources": {
+      "description": "Controls the `command` plugin source, whose plugin directory is produced by running a marketplace-declared command on this machine. true: command-sourced plugins are never installed, updated, or re-resolved (the command never runs). false: explicitly allowed. Unset: follows allowManagedHooksOnly — an org that restricts hook execution to managed settings gets command sources disabled too. Only honored from managed settings.",
+      "type": "boolean"
+    },
+    "disableSideloadFlags": {
+      "description": "When true (and set in managed settings), rejects the --plugin-dir, --plugin-url, --agents, and non-sdk --mcp-config CLI flags at startup. Closes the CLI-flag bypass of strictKnownMarketplaces. Pair with allowedMcpServers for per-server MCP control; this setting does not gate other MCP entry points (SDK setMcpServers, claude mcp add, .mcp.json). Also blocks surfaces that spawn the CLI with these flags internally (see settings documentation). Only honored from managed settings; ignored in user/project/local settings.",
+      "type": "boolean"
     },
     "pluginSuggestionMarketplaces": {
       "description": "Marketplace names whose plugins may surface as contextual install suggestions (relevance-based tips). No marketplace-declared suggestions surface without this allowlist; the built-in first-party frontend-design tip is unaffected. Only honored when set in managed settings (policy scope); the key is ignored in user, project, and local settings. A name only takes effect when the marketplace is registered on the machine AND its registered source is also declared in managed settings, either as the extraKnownMarketplaces entry for that name or as an entry of strictKnownMarketplaces. A marketplace registered from a different source under an allowlisted name is ignored. The official marketplace is exempt from the source requirement: allowlisting its name alone suffices, since that name can only register from the official Anthropic source.",
@@ -2677,7 +4230,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       }
     },
     "forceLoginMethod": {
-      "description": "Force a specific login method: \"claudeai\" for Claude Pro/Max, \"console\" for Console billing, \"gateway\" for the Cloud gateway OIDC device flow",
+      "description": "Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing, "gateway" for the Cloud gateway OIDC device flow",
       "type": "string",
       "enum": [
         "claudeai",
@@ -2686,12 +4239,27 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       ]
     },
     "forceLoginGatewayUrl": {
-      "description": "@internal Cloud gateway URL to pre-fill and auto-connect to during login. Typically set in local managed settings alongside forceLoginMethod: \"gateway\" so users never type the URL. Hidden from public SDK types until Cloud gateway is documented.",
+      "description": "Cloud gateway URL to pre-fill during login, alongside forceLoginMethod: "gateway". Honored from admin-controlled managed settings (MDM / managed-settings.json / policy helper) and, on a machine with none of those, from your own user settings; ignored in project, local, flag, and remote-delivered settings.",
       "type": "string",
-      "format": "uri"
+      "minLength": 1
+    },
+    "gatewayInternalNetworks": {
+      "description": "IPv4 CIDR blocks (at most 4, each /8 to /32, not overlapping) your Cloud gateway sits in: the public block your organization numbers its internal network from, which lets /login reach a gateway there. A block must lie entirely outside private space, where /login accepts a gateway without this key. /login accepts a gateway inside a listed block over a direct connection only, and only when this machine's own address on that connection is inside the same block, so /login must happen from a machine whose own address is inside the block (not through a proxy, VPN pool, container or NAT segment outside it). A bar against copied settings files, not proof of location. Honored only from admin-controlled managed settings (MDM / managed-settings.json / policy helper); ignored in user, project, and remote-delivered settings.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "parentSettingsBehavior": {
-      "description": "Controls whether the SDK parent tier (Options.managedSettings / --managed-settings) layers under this admin tier. \"first-wins\" (default): parent is dropped — admin tiers are the only policy source. \"merge\": parent's restrictive-only-filtered settings union under the admin winner. Has no effect when no admin tier exists (parent applies as the sole policy tier, still filtered restrictive-only).",
+      "description": "Controls whether the SDK parent tier (Options.managedSettings / --managed-settings) layers under this admin tier. "first-wins" (the default, except in a gateway session Claude Desktop's Code tab launched, where "merge" is): parent is dropped — admin tiers are the only policy source. "merge": parent's restrictive-only-filtered settings union under the admin winner. Has no effect when no admin tier exists (parent applies as the sole policy tier, still filtered restrictive-only).",
+      "type": "string",
+      "enum": [
+        "first-wins",
+        "merge"
+      ]
+    },
+    "managedSourcesBehavior": {
+      "description": "Controls how the managed settings sources compose. "first-wins" (default): the highest-priority source present (server-managed > MDM (managed plist / HKLM) > managed-settings.json) is the managed tier alone. "merge": every present source deep-merges with fixed precedence server-managed > MDM > managed-settings.json — scalars take the highest source's value (a restrictive boolean or enum — the allowManaged*Only locks, the disable* switches, the sandbox lock family — takes the strictest value any source sets) and arrays union, except fallbackModel, the restriction allowlists allowedMcpServers, allowedProviders, availableModels, strictKnownMarketplaces and allowedChannelPlugins, and sandbox.credentials.awsPairs and sandbox.ripgrep (the highest source that sets one owns it whole), modelOverrides (the whole map of the highest source that sets it, dropped when that source sits below the one that sets availableModels), managedMcpServers (server names union; a name set by two sources takes the higher source's whole entry), and the keys taken from the highest source only: the auth pins forceLoginOrgUUID, forceLoginMethod, forceLoginGatewayUrl and gatewayInternalNetworks, the credential helpers apiKeyHelper, awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper and proxyAuthHelper, modelPicker, permissions.defaultMode, parentSettingsBehavior and the policyHelper configuration (env keeps its own per-key union). In both modes, a forceLoginOrgUUID, or a forceLoginMethod of claudeai or console, that this machine's own MDM policy or managed settings file sets applies ahead of server-managed settings. Honored only from the highest-priority source present; enable it only when every lower source is admin-controlled, since lower sources then contribute entries such as permissions.allow. HKCU and --managed-settings never take part in the merge.",
       "type": "string",
       "enum": [
         "first-wins",
@@ -2711,6 +4279,23 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           }
         }
       ]
+    },
+    "allowedProviders": {
+      "description": "Managed settings only (managed-settings.json, MDM, or server-managed). The API providers Claude Code may use on this machine: "anthropic" (the Anthropic API on Anthropic's own host, via a claude.ai or Console sign-in or an API key; pair it with forceLoginMethod / forceLoginOrgUUID to require a sign-in), "bedrock", "vertex", "foundry", "anthropicAws", "mantle" (each meaning that provider's own service: its regional, FIPS, private-endpoint and sovereign-cloud hosts), "customEndpoint" (the Anthropic API or a cloud provider's API sent to some other host — ANTHROPIC_BASE_URL, that provider's ANTHROPIC_*_BASE_URL, a Foundry resource name that is not a bare name, or for Bedrock the AWS SDK's AWS_ENDPOINT_URL[_BEDROCK[_RUNTIME]] — such as an LLM gateway; admitted only for the value pinned in the "env" block of the same managed source), or "gateway" (the Cloud gateway sign-in). A session on a provider that is not listed is refused at startup, at login, and when it next contacts the API, with a message naming what selected the provider and the entry that would allow it. Under a list, where first-party traffic goes (ANTHROPIC_BASE_URL, a gateway sign-in) is honored only when the same managed source pins it in "env" (or forceLoginGatewayUrl), and a claude ssh tunnel into the machine is refused. A cloud provider's credential and tenancy variables, and the network path and TLS trust (HTTPS_PROXY, NODE_EXTRA_CA_CERTS, CLAUDE_CODE_CERT_STORE), are not judged by this list; set those for the fleet in the managed "env" block, whose values replace the user's. To route Bedrock through a gateway for a fleet, pin ANTHROPIC_BEDROCK_BASE_URL there (it is what the clients use, ahead of an endpoint_url in ~/.aws/config, which this list does not judge); the AWS SDK's AWS_ENDPOINT_URL* pins only sanction where the SDK's own clients go and never stand in for the "bedrock" entry. Unset allows every provider; an empty array allows none. Only a list in managed-settings.json or MDM is enforcement on the machine: it cannot be widened or hidden by server-managed settings and reaches every session. A list set only in the admin console reaches only sessions that fetch your server-managed settings — not a session on a cloud provider, another organization or a non-Anthropic ANTHROPIC_BASE_URL, one authenticating only with apiKeyHelper or ANTHROPIC_AUTH_TOKEN, a Pro/Max login, --bare without an API key, or a first launch before the fetch lands — all conditions the user controls. Versions that predate this setting ignore it; pair it with a minimum-version policy on a mixed fleet. 'claude auth status' reports the Anthropic API as apiProvider "firstParty".",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "anthropic",
+          "customEndpoint",
+          "bedrock",
+          "vertex",
+          "foundry",
+          "anthropicAws",
+          "mantle",
+          "gateway"
+        ]
+      }
     },
     "forceRemoteSettingsRefresh": {
       "description": "When set in managed settings, the CLI blocks startup until remote managed settings are freshly fetched, and exits if the fetch fails",
@@ -2734,7 +4319,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       ]
     },
     "language": {
-      "description": "Preferred language for Claude responses and voice dictation (e.g., \"japanese\", \"spanish\")",
+      "description": "Preferred language for Claude responses and voice dictation (e.g., "japanese", "spanish")",
       "type": "string"
     },
     "skipWebFetchPreflight": {
@@ -2745,23 +4330,25 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Run Bash commands inside the sandbox. Default: false. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, and managed, --settings or user settings set true, false from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (true there still applies).",
           "type": "boolean"
         },
         "failIfUnavailable": {
-          "description": "Exit with an error at startup if sandbox.enabled is true but the sandbox cannot start (missing dependencies or unsupported platform). When false (default), a warning is shown and commands run unsandboxed. Intended for managed-settings deployments that require sandboxing as a hard gate.",
+          "description": "Exit with an error at startup if sandbox.enabled is true but the sandbox cannot start (missing dependencies or unsupported platform). When false (default), a warning is shown and commands run unsandboxed. Intended for managed-settings deployments that require sandboxing as a hard gate. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, and managed, --settings or user settings set true, false from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (true there still applies).",
           "type": "boolean"
         },
         "autoAllowBashIfSandboxed": {
           "type": "boolean"
         },
         "allowUnsandboxedCommands": {
-          "description": "Allow commands to run outside the sandbox via the dangerouslyDisableSandbox parameter. When false, the dangerouslyDisableSandbox parameter is completely ignored and all commands must run sandboxed. Default: true.",
+          "description": "Allow commands to run outside the sandbox via the dangerouslyDisableSandbox parameter. When false, the dangerouslyDisableSandbox parameter is completely ignored and all commands must run sandboxed. Default: true. A false in managed, --settings or user settings holds whatever project settings (.claude/settings.json and .claude/settings.local.json) say (false there still applies).",
           "type": "boolean"
         },
         "network": {
           "type": "object",
           "properties": {
             "allowedDomains": {
+              "description": "Domains sandboxed commands may reach without a prompt (wildcards such as *.example.com supported). Merged with WebFetch(domain:…) allow rules and across settings sources. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored. With network.allowManagedDomainsOnly, only managed settings supply it.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -2774,39 +4361,46 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                 "type": "string"
               }
             },
+            "strictAllowlist": {
+              "description": "When true, the sandbox runtime deterministically denies hosts not in allowedDomains instead of prompting. Enforced for sandboxed commands only — in-process tools such as WebFetch are not gated by this setting. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored, and while it is on their allowedDomains and WebFetch(domain:…) allow rules are left out of the allowlist.",
+              "type": "boolean"
+            },
             "allowManagedDomainsOnly": {
               "description": "When true (and set in managed settings), only allowedDomains and WebFetch(domain:...) allow rules from managed settings are respected. User, project, local, and flag settings domains are ignored. Denied domains are still respected from all sources.",
               "type": "boolean"
             },
             "allowUnixSockets": {
-              "description": "macOS only: Unix socket paths to allow. Ignored on Linux (seccomp cannot filter by path).",
+              "description": "macOS only: Unix socket paths to allow. Ignored on Linux (seccomp cannot filter by path). Merged across settings sources. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "allowAllUnixSockets": {
-              "description": "If true, allow all Unix sockets (disables blocking on both platforms).",
+              "description": "If true, allow all Unix sockets (disables blocking on both platforms). When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, true from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (false there still applies).",
               "type": "boolean"
             },
             "allowLocalBinding": {
+              "description": "macOS only: If true, sandboxed commands can bind to localhost ports. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, true from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (false there still applies).",
               "type": "boolean"
             },
             "allowMachLookup": {
-              "description": "macOS only: Additional XPC/Mach service names to allow looking up. Supports trailing-wildcard prefix matching (e.g., \"com.apple.coresimulator.*\"). Needed for tools that communicate via XPC such as the iOS Simulator or Playwright.",
+              "description": "macOS only: Additional XPC/Mach service names to allow looking up. Supports trailing-wildcard prefix matching (e.g., "com.apple.CoreSimulator.*"). Needed for tools that communicate via XPC such as the iOS Simulator or Playwright. Each entry lets sandboxed commands reach services outside the sandbox, and the sandbox does not confine what those services do for them. Merged across settings sources. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "httpProxyPort": {
+              "description": "Local TCP port of your own HTTP proxy for sandboxed traffic, used instead of the proxy Claude Code runs. When managed settings or a --settings file set allowUnsandboxedCommands: false, network.deniedDomains or a WebFetch(domain:…) deny rule, when managed settings set network.allowManagedDomainsOnly: true, or when managed, --settings or user settings set network.strictAllowlist: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored. With network.allowManagedDomainsOnly, only managed settings may set it.",
               "type": "number"
             },
             "socksProxyPort": {
+              "description": "Local TCP port of your own SOCKS5 proxy for sandboxed traffic, used instead of the proxy Claude Code runs. When managed settings or a --settings file set allowUnsandboxedCommands: false, network.deniedDomains or a WebFetch(domain:…) deny rule, when managed settings set network.allowManagedDomainsOnly: true, or when managed, --settings or user settings set network.strictAllowlist: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored. With network.allowManagedDomainsOnly, only managed settings may set it.",
               "type": "number"
             },
             "tlsTerminate": {
-              "description": "[EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can see HTTPS request bodies. Provide a CA cert+key, or omit both to have sandbox-runtime generate an ephemeral one for the session.",
+              "description": "[EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can see HTTPS request bodies. Provide a CA cert+key, or omit both to have sandbox-runtime generate an ephemeral one for the session. On native Windows an ephemeral CA cannot pass the sandbox trust check, so omitting the paths uses a persistent CA managed by the sandbox runtime (set up and trusted via /sandbox install); configured paths are passed to the sandbox runtime verbatim, which rejects a bad or incomplete pair at sandbox initialization. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
               "type": "object",
               "properties": {
                 "caCertPath": {
@@ -2817,17 +4411,15 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
                   "type": "string",
                   "minLength": 1
                 }
-              },
-              "additionalProperties": false
+              }
             }
-          },
-          "additionalProperties": false
+          }
         },
         "filesystem": {
           "type": "object",
           "properties": {
             "allowWrite": {
-              "description": "Additional paths to allow writing within the sandbox. Merged with paths from Edit(...) allow permission rules.",
+              "description": "Additional paths to allow writing within the sandbox. Merged with paths from Edit(...) allow permission rules. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored. When managed settings or a --settings file set filesystem.denyRead, a Read(…) deny rule or a credentials.files entry (deny or mask), a value from project settings (.claude/settings.json and .claude/settings.local.json) under or equal to a denied path, or spelled as a glob or a network path (UNC or automount), is ignored. A value inside a directory sandboxed commands can already write is re-checked before every command and dropped once it has been re-pointed into a denied read path.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -2848,7 +4440,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
               }
             },
             "allowRead": {
-              "description": "Paths to re-allow reading within denyRead regions. Takes precedence over denyRead for matching paths.",
+              "description": "Paths to re-allow reading within denyRead regions. Takes precedence over denyRead for matching paths. When managed settings or a --settings file set allowUnsandboxedCommands: false, filesystem.denyRead, a Read(…) deny rule or a credentials.files entry (deny or mask), or managed settings set network.allowManagedDomainsOnly: true, a value from project settings (.claude/settings.json and .claude/settings.local.json) that would re-open a path managed, --settings or user settings deny reading is ignored, as is one spelled as a glob or a network path (UNC or automount); one carving out of the project's own denyRead still applies. A value inside a directory sandboxed commands can write is re-checked before every command and dropped once it has been re-pointed into a denied path.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -2857,11 +4449,206 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "allowManagedReadPathsOnly": {
               "description": "When true (set in managed settings), only allowRead paths from policySettings are used.",
               "type": "boolean"
+            },
+            "disabled": {
+              "description": "macOS and Linux/WSL only: skip filesystem isolation entirely while keeping network and seccomp isolation. Ignored on native Windows, where the sandboxed process runs as a separate user with no inherent rights, so skipping the filesystem rules would withhold every access grant rather than loosen them — filesystem isolation stays on there. Sandboxed commands get unrestricted read/write access to the host filesystem; network egress is still confined to network.allowedDomains. Intended for deployments whose goal is egress control rather than filesystem containment. Does not change Bash prompting: sandbox.autoAllowBashIfSandboxed is independent and still defaults to true, so set it to false to keep prompting for sandboxed commands. Drops the read protection from filesystem.denyRead and credentials.files deny entries for sandboxed commands, since both are enforced by the filesystem layer this turns off; credentials.files mask entries (sentinel binds) and credentials.envVars deny/mask are unaffected. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. If managed settings configure sandbox.filesystem at all, or list any sandbox.credentials.files deny entry, only managed settings can set this: an admin who deployed filesystem restrictions must not have them switched off by a user-writable file. (sandbox.credentials.envVars and credentials.files mask entries do not pin it — env scrubbing and sentinel binds are independent of the filesystem layer and survive this setting.) When unset, filesystem isolation stays on.",
+              "type": "boolean"
             }
-          },
-          "additionalProperties": false
+          }
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "description": "Credential files or directories to protect. `deny` blocks reads inside the sandbox; `mask` substitutes a sentinel inside the sandbox (whole-file, or per-`extract` capture) and injects the real value at the proxy. On macOS and Windows `mask` degrades to `deny`.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "description": "Path to a credential file or directory. Same resolution as sandbox.filesystem.* paths: absolute, ~ expanded, or relative to the settings file root (project root for project settings, ~/.claude for user settings).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "mode": {
+                    "description": "Access mode for this path. `deny` blocks reads inside the sandbox; `mask` shows sandboxed commands a sentinel-substituted copy (whole-file, or only the spans captured by `extract`) and the host proxy swaps sentinel→real on egress to `injectHosts`. On macOS and Windows `mask` currently degrades to `deny`.",
+                    "type": "string",
+                    "enum": [
+                      "deny",
+                      "mask"
+                    ]
+                  },
+                  "extract": {
+                    "description": "Optional regex for structured masking when mode is `mask`. Applied globally to the file; capture group 1 of each match is a credential value, and only those captured spans are replaced with sentinels — the rest of the file is preserved so a tool that parses it (.netrc, JSON, YAML) still succeeds. Without `extract`, the entire file content is replaced with one sentinel (whole-file masking, suited to single-secret files). If the regex matches nothing, behavior is governed by `onExtractNoMatch` (default `warn`). Accepted but ignored for `deny`.",
+                    "type": "string"
+                  },
+                  "onExtractNoMatch": {
+                    "description": "What to do when `extract` matches nothing in the file — or, with `decode`, when no candidate survives verification. `warn` (default) emits a stderr warning and leaves the file readable as-is inside the sandbox (fail-open, for credentials that may be legitimately absent); `deny` degrades the entry to mode `deny` so the file is unreadable (fail-closed) — under `sandbox.filesystem.disabled` it is treated as `error`, since read-denies are dropped in that mode; `error` aborts at sandbox setup so nothing runs until the config is fixed. Only meaningful when mode is `mask` and `extract` or `decode` is set; accepted but ignored otherwise.",
+                    "type": "string",
+                    "enum": [
+                      "warn",
+                      "deny",
+                      "error"
+                    ]
+                  },
+                  "decode": {
+                    "description": "Optional encoded-credential format for `mask` mode. `jwt`: candidates are located with a built-in JWT regex (or the explicit `extract` pattern, if set), verified to actually be JWTs before masking, and replaced with a structurally valid fake JWT so client-side token parsing inside the sandbox keeps working. If no candidate verifies, behavior is governed by `onExtractNoMatch` (default `warn`). Accepted but ignored for `deny`.",
+                    "type": "string",
+                    "enum": [
+                      "jwt"
+                    ]
+                  },
+                  "maskClaims": {
+                    "description": "Names of top-level payload claims to mask inside each decoded value, instead of replacing the whole token. Each named claim present with a string value gets its own sentinel and the token is rebuilt around the modified payload; all other claims are preserved so a tool that decodes the token and reads a non-secret claim keeps working. Requires `decode`. If no named claim matches in any verified token, behavior is governed by `onExtractNoMatch` (default `warn`). Only meaningful when mode is `mask`; accepted but ignored for `deny`.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "maskDuplicates": {
+                    "description": "If true, verbatim occurrences of each captured credential value outside the regex-matched spans are also replaced with the corresponding sentinel — for a secret repeated where the regex does not reach (e.g. pasted into a comment). Matches raw substrings, so short or common values may corrupt unrelated content; intended for long, high-entropy secrets. Defaults to false. Only meaningful when mode is `mask` and `extract` or `decode` is set; accepted but ignored otherwise.",
+                    "type": "boolean"
+                  },
+                  "injectHosts": {
+                    "description": "Optional narrowing of where the proxy substitutes this credential. Only meaningful when mode is `mask`; accepted but ignored for `deny`. If unset, defaults to `network.allowedDomains` — the credential is injected at every reachable host. Each entry must be reachable via `network.allowedDomains` (sandbox-runtime validates this).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "path",
+                  "mode"
+                ]
+              }
+            },
+            "envVars": {
+              "description": "Environment variables to protect. `deny` unsets the variable for sandboxed commands; `mask` substitutes a sentinel inside the sandbox and injects the real value at the proxy.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "Environment variable name.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "mode": {
+                    "description": "Access mode for this environment variable. `deny` unsets the variable for sandboxed commands; `mask` shows sandboxed commands a sentinel value and the host proxy swaps sentinel→real on egress to `injectHosts`.",
+                    "type": "string",
+                    "enum": [
+                      "deny",
+                      "mask"
+                    ]
+                  },
+                  "extract": {
+                    "description": "Optional regex for structured masking when mode is `mask`. Applied globally to the value; capture group 1 of each match is a credential value, and only those captured spans are replaced with sentinels — the rest of the value is preserved so a tool that parses it (a `DATABASE_URL` connection string, a composite `KEY:SECRET` pair) still succeeds inside the sandbox. Without `extract`, the entire value is replaced with one sentinel (whole-value masking, suited to bare tokens). If the regex matches nothing, behavior is governed by `onExtractNoMatch` (default `warn`). Cannot be combined with `decode` (the decode path never consults it). Accepted but ignored for `deny`.",
+                    "type": "string"
+                  },
+                  "onExtractNoMatch": {
+                    "description": "What to do when `extract` matches nothing in the value. `warn` (default) emits a stderr warning and lets the variable pass through unmasked (fail-open, for credentials that may be legitimately absent); `deny` unsets the variable inside the sandbox (fail-closed); `error` aborts at sandbox setup so nothing runs until the config is fixed. Only meaningful when mode is `mask` and `extract` is set without `decode`. On a mask entry with `decode`, the runtime takes the decode path and never consults this field, so a fail-closed setting cannot be honored — `deny` and `error` are rejected there; only `warn` is accepted. In all other shapes the field is accepted but ignored.",
+                    "type": "string",
+                    "enum": [
+                      "warn",
+                      "deny",
+                      "error"
+                    ]
+                  },
+                  "decode": {
+                    "description": "Optional encoded-credential format for `mask` mode. `jwt`: the variable's whole value is verified to actually be a JWT and replaced with a structurally valid fake JWT so client-side token parsing inside the sandbox keeps working; the proxy swaps the whole fake token on egress. If the value does not verify, the variable is left unmasked with a stderr warning (fail-open). Cannot be combined with `extract` — the decode path never consults it. Accepted but ignored for `deny`.",
+                    "type": "string",
+                    "enum": [
+                      "jwt"
+                    ]
+                  },
+                  "maskClaims": {
+                    "description": "Names of top-level payload claims to mask inside the decoded value, instead of replacing the whole token. Each named claim present with a string value gets its own sentinel and the token is rebuilt around the modified payload; all other claims are preserved so claim-reading clients keep working. Requires `decode`. If no named claim matches, the variable is left unmasked with a stderr warning (fail-open). Only meaningful when mode is `mask`; accepted but ignored for `deny`.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "injectHosts": {
+                    "description": "Optional narrowing of where the proxy substitutes this credential. Only meaningful when mode is `mask`; accepted but ignored for `deny`. If unset, defaults to `network.allowedDomains` — the credential is injected at every reachable host. Each entry must be reachable via `network.allowedDomains` (sandbox-runtime validates this).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "mode"
+                ]
+              }
+            },
+            "allowPlaintextInject": {
+              "description": "Allow sentinel→real substitution on the plain-HTTP proxy path. Defaults to false: without TLS termination the upstream identity is unverified and the credential travels in cleartext. Set only for trusted-network test fixtures. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
+              "type": "boolean"
+            },
+            "awsPairs": {
+              "description": "Explicit groupings of masked env vars into AWS credential pairs for SigV4 re-signing, for non-standard variable names. The conventional AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN trio is paired automatically when masked. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. A member is only usable when its env var is forwarded as a whole-value `mask` entry (an entry carrying `extract` or `decode` does not qualify — re-signing needs the whole real value). A pair whose key id or secret member is unusable never re-signs: it is dropped, unless it names a conventional AWS variable, in which case it is forwarded as an inert suppressor so implicit auto-pairing stays overridden. A pair whose ONLY unusable member is the session token still re-signs, without an x-amz-security-token (temporary-credential requests fail upstream until the entry is fixed).",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "accessKeyIdVar": {
+                    "description": "Name of the masked env var holding the AWS access key id.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "secretAccessKeyVar": {
+                    "description": "Name of the masked env var holding the AWS secret access key.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "sessionTokenVar": {
+                    "description": "Optional name of the masked env var holding the AWS session token (temporary credentials). When set, the proxy sends the real token as x-amz-security-token on re-signed requests and adds it to the signed header set if the client did not.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  }
+                },
+                "required": [
+                  "accessKeyIdVar",
+                  "secretAccessKeyVar"
+                ]
+              }
+            },
+            "sigv4": {
+              "description": "Policies for AWS SigV4 request shapes the proxy cannot re-sign (streaming, presigned, sigv4a) when they reference a masked credential pair: `deny` (default) or `passthrough`. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
+              "type": "object",
+              "properties": {
+                "streaming": {
+                  "description": "Policy for aws-chunked streaming uploads (x-amz-content-sha256: STREAMING-*): per-chunk signatures chain off the seed signature, so re-signing would require rewriting the body. `deny` (default) fails closed with a 403; `passthrough` forwards the request unre-signed (the upstream will reject its signature).",
+                  "type": "string",
+                  "enum": [
+                    "deny",
+                    "passthrough"
+                  ]
+                },
+                "presigned": {
+                  "description": "Policy for presigned URLs (X-Amz-Algorithm/X-Amz-Signature in the query, no Authorization header): the signature lives in the URL itself. `deny` (default) or `passthrough`.",
+                  "type": "string",
+                  "enum": [
+                    "deny",
+                    "passthrough"
+                  ]
+                },
+                "sigv4a": {
+                  "description": "Policy for SigV4A (AWS4-ECDSA-P256-SHA256) asymmetric signatures: there is no shared-key HMAC to recompute. `deny` (default) or `passthrough`.",
+                  "type": "string",
+                  "enum": [
+                    "deny",
+                    "passthrough"
+                  ]
+                }
+              }
+            }
+          }
         },
         "ignoreViolations": {
+          "description": "Sandbox violations to leave unreported: a map of command patterns ("*" for every command) to the filesystem paths whose violations are ignored. Merged across settings sources. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -2874,20 +4661,30 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           }
         },
         "enableWeakerNestedSandbox": {
+          "description": "Linux only: Run without the fresh /proc mount, for hosts such as unprivileged Docker containers that cannot create one. **Reduces security** — the host /proc stays readable by sandboxed commands. Default: false. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, true from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (false there still applies).",
+          "type": "boolean"
+        },
+        "allowNestedUserNamespaces": {
+          "description": "Linux/WSL only: Let sandboxed commands create user namespaces of their own, which the sandbox refuses by default. Needed by tools that sandbox themselves that way, such as Chromium's and Electron's sandbox, a nested bubblewrap, and `unshare`. **Removes code-execution isolation** — in any folder a hostile command may write, it can then bypass filesystem.denyWrite, filesystem.denyRead, credentials.files entries and the paths the sandbox always write-protects (such as .claude/settings.json, git hooks and git config), and so plant code that later runs outside the sandbox; while autoAllowBashIfSandboxed is on, the command that plants it needs no approval. Default: false. Only honored from user, managed/policy, or CLI (--settings) settings — true from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (false there still applies).",
           "type": "boolean"
         },
         "enableWeakerNetworkIsolation": {
-          "description": "macOS only: Allow access to com.apple.trustd.agent in the sandbox. Needed for Go-based CLI tools (gh, gcloud, terraform, etc.) to verify TLS certificates when using httpProxyPort with a MITM proxy and custom CA. **Reduces security** — opens a potential data exfiltration vector through the trustd service. Default: false",
+          "description": "macOS only: Allow access to com.apple.trustd.agent in the sandbox. Needed for Go-based CLI tools (gh, gcloud, terraform, etc.) to verify TLS certificates when using httpProxyPort with a MITM proxy and custom CA. **Reduces security** — opens a potential data exfiltration vector through the trustd service. Default: false. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, true from project settings (.claude/settings.json and .claude/settings.local.json) is ignored (false there still applies).",
+          "type": "boolean"
+        },
+        "allowAppleEvents": {
+          "description": "macOS only: Allow sandboxed commands to send Apple Events (and look up the appleeventsd Mach service). Needed for `open`, `osascript`, and browser-based auth flows that open URLs. **Removes code-execution isolation** — sandboxed commands can launch other applications unsandboxed with no user prompt, and can script running apps (e.g. Terminal) subject to the user's per-app TCC automation consent. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. Default: false",
           "type": "boolean"
         },
         "excludedCommands": {
+          "description": "Command patterns (Bash permission-rule syntax) for commands to run outside the sandbox. An entry takes a call out of the sandbox only when every command in the call matches an entry: in a Bash pipe or a chain such as `a && b`, each part needs its own match. Some calls stay sandboxed whatever the entries, such as one with a `cd`, a command substitution, or a redirect other than a file-descriptor duplication like `2>&1`, a heredoc included. A convenience, not a security boundary: excluded commands still go through the permission flow. Merged across settings sources. When managed settings or a --settings file set allowUnsandboxedCommands: false, or managed settings set network.allowManagedDomainsOnly: true, values from project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "ripgrep": {
-          "description": "Custom ripgrep configuration for bundled ripgrep support",
+          "description": "Custom ripgrep configuration for bundled ripgrep support. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.",
           "type": "object",
           "properties": {
             "command": {
@@ -2902,8 +4699,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           },
           "required": [
             "command"
-          ],
-          "additionalProperties": false
+          ]
         },
         "bwrapPath": {
           "description": "Linux/WSL only: Absolute path to the bwrap (bubblewrap) binary. Overrides auto-detection via PATH. Only honored from admin-controlled managed settings.",
@@ -2922,12 +4718,21 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "minimum": 0,
       "maximum": 1
     },
+    "feedbackDrafts": {
+      "description": "Model-drafted feedback (the SendFeedback tool). "notify" (default) shows a one-line notice when a draft is queued; "quiet" shows only the footer counter; "off" disables the tool entirely so drafts are never queued.",
+      "type": "string",
+      "enum": [
+        "notify",
+        "quiet",
+        "off"
+      ]
+    },
     "spinnerTipsEnabled": {
       "description": "Whether to show tips in the spinner",
       "type": "boolean"
     },
     "spinnerVerbs": {
-      "description": "Customize spinner verbs. mode: \"append\" adds verbs to defaults, \"replace\" uses only your verbs.",
+      "description": "Customize spinner verbs. mode: "append" adds verbs to defaults, "replace" uses only your verbs.",
       "type": "object",
       "properties": {
         "mode": {
@@ -2947,11 +4752,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "required": [
         "mode",
         "verbs"
-      ],
-      "additionalProperties": false
+      ]
     },
     "spinnerTipsOverride": {
-      "description": "Override spinner tips. tips: array of tip strings. excludeDefault: if true, only show custom tips (default: false).",
+      "description": "Add your organization's own tips to the spinner tip rotation. tips: strings or {id, text, cooldownSessions?, priority?} objects; tipsFile: a JSON file of the same; label: prefix shown before your tips; excludeDefault: if true, only show your tips (default: false).",
       "type": "object",
       "properties": {
         "excludeDefault": {
@@ -2960,22 +4764,82 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "tips": {
           "type": "array",
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "description": "{ id: stable id (letters, digits, ".", "_", "-"; max 64), text: the tip (max 500 characters, one line), cooldownSessions?: sessions to wait before showing it again (default 0), priority?: tie-break weight among never-shown tips (default 0) }",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {}
+              }
+            ]
           }
+        },
+        "tipsFile": {
+          "description": "Absolute or ~/ local path to a JSON file holding an array of tips (same shapes as `tips`); honored from user, --settings and on-disk managed settings only. Read once per CLI process (restart to pick up edits).",
+          "type": "string"
+        },
+        "label": {
+          "description": "Prefix shown before your tips in the spinner (default "Tip")",
+          "type": "string"
         }
       },
-      "required": [
-        "tips"
-      ],
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "syntaxHighlightingDisabled": {
       "description": "Whether to disable syntax highlighting in diffs",
       "type": "boolean"
     },
+    "maxProseWidth": {
+      "description": "Maximum width, in terminal columns, of the prose in Claude's responses (paragraphs, headings, lists, blockquotes). In a wider terminal the prose wraps at this width while tables and code blocks keep the full width; only the display wraps, the response text itself gains no line breaks. Minimum 40. Unset (the default) uses the full terminal width.",
+      "type": "integer",
+      "minimum": 40,
+      "maximum": 9007199254740991
+    },
+    "spellcheck": {
+      "description": "Underline misspelled words in the prompt input as you type, using an installed aspell, hunspell or ispell (off unless "enabled" is true; does nothing if none is installed). Read from user, flag and managed settings only (the whole block from the highest-precedence of those applies); ignored in project .claude/settings.json and .claude/settings.local.json.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Turn on spell checking of the prompt input (default: false)",
+          "type": "boolean"
+        },
+        "checker": {
+          "description": "Which spell checker to run: "aspell", "hunspell", "ispell", or "auto" (default) for the first of those found on PATH",
+          "type": "string"
+        },
+        "language": {
+          "description": "Dictionary to use, passed to the checker as-is (aspell --lang, hunspell -d, ispell -d), e.g. "en_GB"; names are checker-specific (letters, digits and _ - . , only). Default: the checker's own default",
+          "type": "string"
+        },
+        "color": {
+          "description": "Color of misspelled words (they are also underlined): a terminal color name such as "red" or "magenta", "#rrggbb", "rgb(r,g,b)", "ansi256(n)" or "ansi:<name>". Default: the theme's error color",
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
     "terminalTitleFromRename": {
       "description": "Whether /rename updates the terminal tab title (defaults to true). Set to false to keep auto-generated topic titles.",
       "type": "boolean"
+    },
+    "promptCacheTtl": {
+      "description": "Prompt cache TTL for the main conversation (interactive, -p and SDK turns, plus the helpers that run inline with it): "5m" or "1h". Unset = automatic: 1 hour on a Claude subscription within its usage limits, 5 minutes on an API key, Bedrock, Vertex or Foundry. 1-hour cache writes are billed at a higher rate; the cache stays warm across longer breaks. The CLAUDE_CODE_PROMPT_CACHE_TTL environment variable takes precedence.",
+      "type": "string",
+      "enum": [
+        "5m",
+        "1h"
+      ]
+    },
+    "subagentPromptCacheTtl": {
+      "description": "Prompt cache TTL for everything outside the main conversation — subagents, workflows, background and helper requests: "5m" or "1h". Unset = automatic (5 minutes unless ENABLE_PROMPT_CACHING_1H=1). The CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL environment variable takes precedence.",
+      "type": "string",
+      "enum": [
+        "5m",
+        "1h"
+      ]
     },
     "alwaysThinkingEnabled": {
       "description": "When false, thinking is disabled. When absent or true, thinking is enabled automatically for supported models.",
@@ -2991,8 +4855,67 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "xhigh"
       ]
     },
+    "maxEffortLevel": {
+      "description": "Maximum effort level. Anything above it (an /effort or /model pick, --effort, CLAUDE_CODE_EFFORT_LEVEL, a model default) is clamped to it, on every provider including Bedrock, Vertex and Foundry. Combines with an organization's per-model effort cap by taking the lower of the two; across settings files the lowest value wins, and modelSettings.<model>.maxEffortLevel replaces it per model. Enforced client-side: an effort supplied through CLAUDE_CODE_EXTRA_BODY is not clamped.",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "modelSettings": {
+      "description": "Per-model settings keyed by canonical model name.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "effortLevel": {
+            "description": "Persisted effort level for this model.",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          "maxEffortLevel": {
+            "description": "Maximum effort level for this model. Within one settings file it replaces the top-level maxEffortLevel for the model ("max" exempts it); across settings files the lowest applicable value wins. Keyed like effortLevel: the canonical model name also matches its dated, [1m], Bedrock and Vertex spellings.",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "autoCompactWindow": {
+            "description": "Auto-compact window for this model, in tokens (100000 to 1000000), or "auto" for the window tuned for the model. Within one settings file it replaces the top-level autoCompactWindow for the model. /autocompact saves here. The canonical model name as key also matches its dated, [1m], Bedrock and Vertex spellings.",
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "integer",
+                "minimum": 100000,
+                "maximum": 1000000
+              }
+            ]
+          }
+        },
+        "additionalProperties": {}
+      }
+    },
     "ultracode": {
-      "description": "Enable ultracode for the session: xhigh effort plus standing dynamic-workflow orchestration. Session-scoped — typically provided via --settings or the apply_flag_settings control request; interactive toggles never persist it. Requires workflows to be enabled and an xhigh-capable model.",
+      "description": "Enable ultracode for the session: standing dynamic-workflow orchestration at any effort level. Session-scoped — typically provided via --settings or the apply_flag_settings control request; interactive toggles never persist it. Requires workflows to be enabled and a model that supports ultracode.",
       "type": "boolean"
     },
     "autoCompactWindow": {
@@ -3017,13 +4940,33 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "description": "When false, prompt suggestions are disabled. When absent or true, prompt suggestions are enabled.",
       "type": "boolean"
     },
-    "awaySummaryEnabled": {
-      "description": "@internal When false, the session recap (shown when you return after being away for 5+ minutes) is disabled. When absent or true, recap is enabled. Hidden from public SDK types until external launch.",
+    "emojiCompletionEnabled": {
+      "description": "When false, the :emoji: shortcode typeahead (the suggestion popup and the :name: inline replacement) is disabled. When absent or true, it is enabled.",
       "type": "boolean"
     },
     "showClearContextOnPlanAccept": {
-      "description": "When true, the plan-approval dialog offers a \"clear context\" option. Defaults to false.",
+      "description": "When true, the plan-approval dialog offers a "clear context" option. Defaults to false.",
       "type": "boolean"
+    },
+    "askUserQuestionTimeout": {
+      "description": "Idle time before Claude's questions auto-continue with any answers selected so far. Defaults to never — auto-continue only runs when explicitly set to 60s/5m/10m.",
+      "type": "string",
+      "enum": [
+        "60s",
+        "5m",
+        "10m",
+        "never"
+      ]
+    },
+    "dialogExpiry": {
+      "description": "Max time a permission/user dialog forwarded to a remote client stays parked awaiting an answer, and how long a HELD cross-session message awaits approval, before either resolves to its safe no-action default (cancelled / dropped-with-denial). Defaults to 5m to match the long-standing remote-dialog deadline; "never" disables the deadline. Local-only permission prompts (no remote client) are unaffected. The CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS env var, when set, overrides this. Read from trusted sources only (never a checked-in repo settings file).",
+      "type": "string",
+      "enum": [
+        "60s",
+        "5m",
+        "10m",
+        "never"
+      ]
     },
     "agent": {
       "description": "Name of an agent (built-in or custom) to use for the main thread. Applies the agent's system prompt, tool restrictions, and model.",
@@ -3043,68 +4986,74 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "type": "string"
       },
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "mcpServers": {
-            "description": "User configuration values for MCP servers keyed by server name",
+        "anyOf": [
+          {
             "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {
-                "anyOf": [
-                  {
+            "properties": {
+              "mcpServers": {
+                "description": "User configuration values for MCP servers keyed by server name",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "propertyNames": {
                     "type": "string"
                   },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
                   }
-                ]
+                }
+              },
+              "options": {
+                "description": "Non-sensitive option values from plugin manifest userConfig, keyed by option name. Sensitive values go to secure storage instead.",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                }
               }
             }
           },
-          "options": {
-            "description": "Non-sensitive option values from plugin manifest userConfig, keyed by option name. Sensitive values go to secure storage instead.",
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
-            }
+          {
+            "not": {}
           }
-        },
-        "additionalProperties": false
+        ]
       }
     },
     "remote": {
@@ -3115,8 +5064,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "description": "Default environment ID to use for cloud sessions",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "autoUpdatesChannel": {
       "description": "Release channel for auto-updates (latest or stable)",
@@ -3144,7 +5092,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "string"
     },
     "tui": {
-      "description": "Terminal UI renderer. \"fullscreen\" uses the flicker-free alt-screen renderer with virtualized scrollback (equivalent to CLAUDE_CODE_NO_FLICKER=1). \"default\" uses the classic main-screen renderer.",
+      "description": "Terminal UI renderer. "fullscreen" uses the flicker-free alt-screen renderer with virtualized scrollback (equivalent to CLAUDE_CODE_NO_FLICKER=1). "default" uses the classic main-screen renderer.",
       "type": "string",
       "enum": [
         "default",
@@ -3170,8 +5118,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "description": "Submit the prompt when hold-to-talk is released (hold mode only)",
           "type": "boolean"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "channelsEnabled": {
       "description": "Managed-org opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). claude.ai Teams/Enterprise: default off. Console: default on unless managed settings exist. Set true to allow; users then select servers via --channels.",
@@ -3193,27 +5140,33 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "required": [
           "marketplace",
           "plugin"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     "prefersReducedMotion": {
       "description": "Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)",
       "type": "boolean"
     },
-    "doneMeansMerged": {
-      "description": "@internal When true, Claude keeps working until the PR is ready for you to merge, a cron/Monitor is armed to resume later, or it hands you a self-contained next step.",
-      "type": "boolean"
-    },
-    "totalTokensReminder": {
-      "description": "@internal Emit a <total_tokens>N tokens left</total_tokens> block in the system prompt and after each tool result. 'infinite' uses the literal value Infinite, 'fixed' uses 5000000, 'countdown' uses the live remaining context-window tokens. Defaults to off. Env var CLAUDE_CODE_TOTAL_TOKENS_REMINDER overrides.",
-      "type": "string",
-      "enum": [
-        "off",
-        "infinite",
-        "fixed",
-        "countdown"
+    "timeFormat": {
+      "description": "Clock format for times shown in the UI: "auto" (default, follows the locale), "12-hour", "24-hour", "24-hour-utc" ("18:05Z"), or a strftime pattern such as "%H:%M" (any value containing "%"; other values read as "auto"). A pattern replaces the time everywhere; message timestamps show only the pattern, so include %Y-%m-%d for the date. /config offers the presets; a pattern is set here.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "auto",
+            "12-hour",
+            "24-hour",
+            "24-hour-utc"
+          ]
+        },
+        {
+          "type": "string"
+        }
       ]
+    },
+    "timeZone": {
+      "description": "IANA time zone for times shown in the UI, e.g. "UTC" or "Europe/Dublin". Default: the system time zone. An unknown name falls back to the system time zone.",
+      "type": "string"
     },
     "autoMemoryEnabled": {
       "description": "Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory.",
@@ -3233,10 +5186,6 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
     },
     "skipDangerousModePermissionPrompt": {
       "description": "Whether the user has accepted the bypass permissions mode dialog",
-      "type": "boolean"
-    },
-    "skipWorkflowUsageWarning": {
-      "description": "@internal Whether the user has accepted the multi-agent workflow usage warning. Until set, auto permission mode prompts before running a workflow.",
       "type": "boolean"
     },
     "disableAutoMode": {
@@ -3261,7 +5210,7 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "type": "string"
           },
           "sshHost": {
-            "description": "SSH host in format \"user@hostname\" or \"hostname\", or a host alias from ~/.ssh/config",
+            "description": "SSH host in format "user@hostname" or "hostname", or a host alias from ~/.ssh/config",
             "type": "string"
           },
           "sshPort": {
@@ -3283,23 +5232,26 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
           "id",
           "name",
           "sshHost"
-        ],
-        "additionalProperties": false
+        ]
       }
+    },
+    "sshHostCommands": {
+      "description": "SSH connections in Claude Desktop on macOS and Linux whose host comes from a command. A list of entries, each with `id`, `name` and `command`, and optionally `sshIdentityFile` and `startDirectory`. When you ask Desktop to create or replace an entry's host, it runs `command` on this computer: a program name or absolute path, followed by plain arguments. There is no shell, so quotes, pipes, variables and a leading `~` do not work. The command must print only the host on standard output: `host` or `user@host` on one line, or a JSON object with `sshHost` and, optionally, `sshPort` and `startDirectory`. Desktop reads this key only from user settings and from this computer's managed settings. Claude Code itself does not use it.",
+      "type": "array"
     },
     "claudeMd": {
       "description": "CLAUDE.md-style instructions injected as organization-managed memory. Only honored from managed/policy settings.",
       "type": "string"
     },
     "claudeMdExcludes": {
-      "description": "Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. Patterns are matched against absolute file paths using picomatch. Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). Examples: \"/home/user/monorepo/CLAUDE.md\", \"**/code/CLAUDE.md\", \"**/some-dir/.claude/rules/**\"",
+      "description": "Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. Patterns are matched against absolute file paths using picomatch. Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). Examples: "/home/user/monorepo/CLAUDE.md", "**/code/CLAUDE.md", "**/some-dir/.claude/rules/**"",
       "type": "array",
       "items": {
         "type": "string"
       }
     },
     "pluginTrustMessage": {
-      "description": "Custom message to append to the plugin trust warning shown before installation. Only read from policy settings (managed-settings.json / MDM). Useful for enterprise administrators to add organization-specific context (e.g., \"All plugins from our internal marketplace are vetted and approved.\").",
+      "description": "Custom message to append to the plugin trust warning shown before installation. Only read from policy settings (managed-settings.json / MDM). Useful for enterprise administrators to add organization-specific context (e.g., "All plugins from our internal marketplace are vetted and approved.").",
       "type": "string"
     },
     "theme": {
@@ -3317,7 +5269,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
             "dark-ansi"
           ]
         },
-        {}
+        {
+          "type": "string",
+          "pattern": "^custom:.*"
+        }
       ]
     },
     "editorMode": {
@@ -3327,6 +5282,22 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "normal",
         "vim"
       ]
+    },
+    "keybindingFlavor": {
+      "description": "Deprecated: no longer has any effect. The prompt's word-editing keys always follow Bash (readline) conventions.",
+      "type": "string",
+      "enum": [
+        "classic",
+        "readline"
+      ]
+    },
+    "vimInsertModeRemaps": {
+      "description": "Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}. Each key is exactly two printable characters typed in sequence; "<Esc>" (return to NORMAL mode) is the only supported target. Applies when editorMode is "vim".",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
     },
     "verbose": {
       "description": "Show full tool output instead of truncated summaries",
@@ -3338,8 +5309,8 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "enum": [
         "auto",
         "iterm2",
-        "iterm2_with_bell",
         "terminal_bell",
+        "iterm2_with_bell",
         "kitty",
         "ghostty",
         "notifications_disabled"
@@ -3350,11 +5321,19 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "boolean"
     },
     "precomputeCompactionEnabled": {
-      "description": "@internal Precompute the compaction summary in the background before it is needed. Only applies when auto-compact is on.",
+      "description": "Precompute the compaction summary in the background before it is needed. Only applies when auto-compact is on.",
+      "type": "boolean"
+    },
+    "idleCompaction": {
+      "description": "Set to false to stop Claude Code from compacting a long conversation while the session is idle. Defaults to true.",
       "type": "boolean"
     },
     "switchModelsOnFlag": {
-      "description": "When safety measures flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead.",
+      "description": "When safeguards flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead.",
+      "type": "boolean"
+    },
+    "autoContinueAtUsageLimit": {
+      "description": "When a claude.ai usage limit stops your session, wait for the limit to reset and continue the task automatically. When off, the limit dialog offers the wait as a choice instead.",
       "type": "boolean"
     },
     "autoScrollEnabled": {
@@ -3370,11 +5349,11 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "boolean"
     },
     "showTurnDuration": {
-      "description": "Show \"Cooked for Nm Ns\" after each assistant turn",
+      "description": "Show "Cooked for Nm Ns" after each assistant turn",
       "type": "boolean"
     },
     "showMessageTimestamps": {
-      "description": "Stamp each assistant message with its arrival time",
+      "description": "Stamp each message with its arrival time",
       "type": "boolean"
     },
     "terminalProgressBarEnabled": {
@@ -3386,11 +5365,12 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "boolean"
     },
     "teammateMode": {
-      "description": "How spawned teammates execute (tmux, in-process, auto)",
+      "description": "How spawned teammates execute (tmux, iterm2, in-process, auto)",
       "type": "string",
       "enum": [
         "auto",
         "tmux",
+        "iterm2",
         "in-process"
       ]
     },
@@ -3408,6 +5388,15 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "enum": [
         "transient",
         "ask"
+      ]
+    },
+    "crossSessionInbound": {
+      "description": "Inbound cross-session peer messages (SendMessage from your other sessions): 'accept' delivers them, 'hold' parks them for your review without letting Claude act, 'refuse' opts this session out. An explicit value always wins. Unset (mode parity): a message auto-delivers only when the sending session's permission-mode class matches yours (bypass↔bypass or prompting↔prompting); a mismatched sender's message is held for your approval; a sender that asserts no class is held only while this session bypasses permission prompts.",
+      "type": "string",
+      "enum": [
+        "accept",
+        "hold",
+        "refuse"
       ]
     },
     "autoUploadSessions": {
@@ -3435,35 +5424,38 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
       "type": "object",
       "properties": {
         "allow": {
-          "description": "Rules for the auto mode classifier allow section. Include the literal string \"$defaults\" to inherit the built-in rules at that position.",
+          "description": "Rules for the auto mode classifier allow section. Include the literal string "$defaults" to inherit the built-in rules at that position.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "soft_deny": {
-          "description": "Rules for the auto mode classifier SOFT BLOCK section — destructive/irreversible actions that user intent can clear. Include the literal string \"$defaults\" to inherit the built-in rules at that position.",
+          "description": "Rules for the auto mode classifier SOFT BLOCK section — destructive/irreversible actions that user intent can clear. Include the literal string "$defaults" to inherit the built-in rules at that position.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "hard_deny": {
-          "description": "Rules for the auto mode classifier HARD BLOCK section — security boundaries that user intent does NOT clear. Include the literal string \"$defaults\" to inherit the built-in rules at that position.",
+          "description": "Rules for the auto mode classifier HARD BLOCK section — security boundaries that user intent does NOT clear. Include the literal string "$defaults" to inherit the built-in rules at that position.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "environment": {
-          "description": "Entries for the auto mode classifier environment section. Include the literal string \"$defaults\" to inherit the built-in entries at that position.",
+          "description": "Entries for the auto mode classifier environment section. Include the literal string "$defaults" to inherit the built-in entries at that position.",
           "type": "array",
           "items": {
             "type": "string"
           }
+        },
+        "classifyAllShell": {
+          "description": "When true, every Bash/PowerShell allow rule is suspended while auto mode is active so all shell commands are routed through the classifier (higher safety, more classifier calls). Default: false.",
+          "type": "boolean"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "disableDeepLinkRegistration": {
       "description": "Prevent claude-cli:// protocol handler registration with the OS",
@@ -3483,6 +5475,10 @@ IMPORTANT: Do not update the env unless explicitly instructed to do so.
         "chat",
         "transcript"
       ]
+    },
+    "axScreenReader": {
+      "description": "Render screen-reader friendly output (flat text, no decorative borders or animations). Overridden by the CLAUDE_AX_SCREEN_READER env var and the --ax-screen-reader CLI flag. Ignored in project and local settings.",
+      "type": "boolean"
     }
   },
   "additionalProperties": {}

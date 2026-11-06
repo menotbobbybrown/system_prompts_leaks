@@ -1,6 +1,6 @@
 # Managed Agents - Memory Stores
 
-> **Public beta.** Memory stores ship under the `managed-agents-2026-04-01` beta header; the SDK sets it automatically on all `client.beta.memory_stores.*` calls. If `client.beta.memory_stores` is missing, upgrade to the latest SDK release.
+> **Public beta.** Memory stores ship under the `agent-memory-2026-07-22` beta header; the SDK sets it automatically on all `client.beta.memory_stores.*` calls. Don't add `managed-agents-2026-04-01` to these calls - sending both headers on a memory store request returns a 400. Attaching a store to a session is a session call and still uses `managed-agents-2026-04-01`. If `client.beta.memory_stores` is missing, upgrade to the latest SDK release.
 
 Sessions are ephemeral by default - when one ends, anything the agent learned is gone. A **memory store** is a workspace-scoped collection of small text documents that persists across sessions. When a store is attached to a session (via `resources[]`), it is mounted into the container as a filesystem directory; the agent reads and writes it with the ordinary file tools, and a system-prompt note tells it the mount is there.
 
@@ -78,7 +78,7 @@ Each attached store is mounted in the session container at `/mnt/memory/<store-n
 
 Writes the agent makes under the mount are persisted back to the store and produce memory versions just like host-side `memories.update` calls.
 
-**Self-hosted sandboxes: a synced local copy, not a live mount.** On a `self_hosted` environment the SDK worker (`EnvironmentWorker` - Python, TypeScript, Go; the `ant` CLI worker does not mount stores) downloads each attached store to the same `/mnt/memory/<store-name>/` path and reconciles it with the store on an interval, so writes are visible to other sessions only after sync, conflicts resolve in favor of the store, and `read_only` is enforced by the worker's tools rather than the filesystem (`bash` can still alter the local copy). Everything else - sync interval, per-session `secret`, host prep, troubleshooting - lives in `shared/managed-agents-self-hosted-sandboxes.md` § Memory stores. Not available on self-hosted environments on Claude Platform on AWS.
+**Self-hosted sandboxes: a synced local copy, not a live mount.** On a `self_hosted` environment the SDK worker (`EnvironmentWorker` - Python, TypeScript, Go; the `ant` CLI worker does not mount stores) downloads each attached store to the same `/mnt/memory/<store-name>/` path and reconciles it with the store on an interval, so writes are visible to other sessions only after sync, conflicts resolve in favor of the store, and `read_only` is enforced by the worker's tools rather than the filesystem (`bash` can still alter the local copy). Everything else - sync interval, per-session `secret`, host prep, troubleshooting - lives in `shared/managed-agents-self-hosted-sandboxes.md` § Memory stores. Not available on self-hosted environments on Claude Platform on AWS or Claude Models on Google Cloud (Anthropic managed).
 
 ## Manage memories directly (host-side)
 
@@ -198,4 +198,4 @@ GET    /v1/memory_stores/{memory_store_id}/memory_versions
 POST   /v1/memory_stores/{memory_store_id}/memory_versions/{version_id}/redact
 ```
 
-For cURL examples and the CLI (`ant beta:memory-stores ...`), WebFetch the Memory URL in `shared/live-sources.md` -> Managed Agents.
+For cURL examples and the CLI (`ant beta:memory-stores ...`), fetch the Memory URL in `shared/live-sources.md` -> Managed Agents.

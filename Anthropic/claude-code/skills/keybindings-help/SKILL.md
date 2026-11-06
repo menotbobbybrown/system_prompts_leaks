@@ -1,9 +1,9 @@
 ---
 name: keybindings-help
-description: 'Use when the user wants to customize keyboard shortcuts, rebind keys, add chord bindings, or modify ~/.claude/keybindings.json. Examples: "rebind ctrl+s", "add a chord shortcut", "change the submit key", "customize keybindings".'
+description: |-
+  Use when the user wants to customize keyboard shortcuts, rebind keys, add chord bindings, or modify ~/.claude/keybindings.json. Examples: "rebind ctrl+s", "add a chord shortcut", "change the submit key", "customize keybindings".
 user-invocable: false
 ---
-
 # Keybindings Skill
 
 Create or modify `~/.claude/keybindings.json` to customize keyboard shortcuts.
@@ -40,11 +40,12 @@ Always include the `$schema` and `$docs` fields.
 - `ctrl` (alias: `control`)
 - `alt` (aliases: `opt`, `option`) — note: `alt` and `meta` are identical in terminals
 - `shift`
-- `meta` (aliases: `cmd`, `command`)
+- `meta` — same key as `alt` in terminals (Option key on macOS)
+- `cmd` (aliases: `command`, `super`, `win`) — Command key on macOS, Windows key on Windows, Super key on Linux; not the same as `meta`. Most terminals never send it (only ones that report the Super modifier, such as through the Kitty keyboard protocol or xterm `modifyOtherKeys`), so prefer `ctrl` for bindings that should work everywhere
 
 **Special keys**: `escape`/`esc`, `enter`/`return`, `tab`, `space`, `backspace`, `delete`, `up`, `down`, `left`, `right`
 
-**Chords**: Space-separated keystrokes, e.g. `ctrl+k ctrl+s` (1-second timeout between keystrokes)
+**Chords**: Space-separated keystrokes, e.g. `ctrl+k ctrl+s` (3-second timeout between keystrokes)
 
 **Examples**: `ctrl+shift+p`, `alt+enter`, `ctrl+k ctrl+n`
 
@@ -110,6 +111,7 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `keybindings.json must have a "bindings" array` | Missing wrapper object | Wrap bindings in `{ "bindings": [...] }` |
 | `"bindings" must be an array` | `bindings` is not an array | Set `"bindings"` to an array: `[{ context: ..., bindings: ... }]` |
 | `Unknown context "X"` | Typo or invalid context name | Use exact context names from the Available Contexts table |
+| `"X" is not a modifier, so "Y" ... applies to "Z" instead` | Error: `X` comes before the key in `Y` but is not a modifier (a typo such as `ctl` for `ctrl`, or two keys joined with `+` instead of a space), so it is dropped and the binding applies to `Z` | Correct the modifier using the Keystroke Syntax list (the message suggests the corrected keystroke when it can), or put a space between the keystrokes of a chord |
 | `Duplicate key "X" in Y bindings` | Same key defined twice in one context | Remove the duplicate; JSON uses only the last value |
 | `"X" may not work: ...` | Key conflicts with terminal/OS reserved shortcut | Choose a different key (see Reserved Shortcuts section) |
 | `Invalid action for "X"` | Action value is not a string or null | Actions must be strings like `"app:help"` or `null` to unbind |
@@ -165,13 +167,20 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `Tabs` | When tab navigation is active |
 | `Attachments` | When navigating image attachments in a select dialog |
 | `Footer` | When footer indicators are focused |
+| `AbovePrompt` | When a plugin's panel above the prompt, or a button in it, has keyboard focus |
+| `AbovePromptInput` | When a plugin's input field above the prompt has keyboard focus |
+| `AbovePromptSelect` | When a plugin's select above the prompt has keyboard focus |
+| `Pane` | When a plugin's pane has keyboard focus |
+| `PaneField` | When an input field or select in a plugin's pane has keyboard focus |
 | `MessageSelector` | When the message selector (rewind) is open |
 | `DiffDialog` | When the diff dialog is open |
 | `DiffPanel` | When the diff sidebar panel is open |
 | `ModelPicker` | When the model picker is open |
+| `EffortSlider` | When the effort slider is open |
 | `Select` | When a select/list component is focused |
 | `Plugin` | When the plugin dialog is open |
 | `Scroll` | When a scrollable view is focused (fullscreen layout) |
+| `Agents` | When the agents view (`claude agents`) is open |
 
 ## Available Actions
 
@@ -199,9 +208,12 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `chat:cycleMode` | `shift+tab` | Chat |
 | `chat:modelPicker` | `meta+p` | Chat |
 | `chat:fastMode` | `meta+o` | Chat |
+| `chat:defaultToNewerModel` | `ctrl+y` | Chat |
 | `chat:thinkingToggle` | `meta+t` | Chat |
 | `chat:workflowKeywordToggle` | `meta+w` | Chat |
 | `chat:submit` | `enter` | Chat |
+| `chat:queueSubmit` | `ctrl+x enter` | Chat |
+| `chat:sendNow` | `ctrl+x ctrl+s`, `ctrl+enter` | Chat |
 | `chat:newline` | `ctrl+j` | Chat |
 | `chat:undo` | `ctrl+_`, `ctrl+-`, `ctrl+shift+-`, `ctrl+shift+_` | Chat |
 | `chat:externalEditor` | `ctrl+x ctrl+e`, `ctrl+g` | Chat |
@@ -213,15 +225,14 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `autocomplete:dismiss` | `escape` | Autocomplete |
 | `autocomplete:previous` | `up` | Autocomplete |
 | `autocomplete:next` | `down` | Autocomplete |
-| `confirm:yes` | `y`, `enter` | Confirmation |
-| `confirm:no` | `escape`, `n`, `escape` | Settings |
+| `confirm:yes` | `enter` | Confirmation |
+| `confirm:no` | `escape`, `escape` | Settings |
 | `confirm:previous` | `up` | Confirmation |
 | `confirm:next` | `down` | Confirmation |
 | `confirm:nextField` | `tab` | Confirmation |
 | `confirm:previousField` | (none) | Confirmation |
 | `confirm:cycleMode` | `shift+tab` | Confirmation |
 | `confirm:toggle` | `space` | Confirmation |
-| `confirm:toggleExplanation` | `ctrl+e` | Confirmation |
 | `tabs:next` | `tab`, `right` | Tabs |
 | `tabs:previous` | `shift+tab`, `left` | Tabs |
 | `transcript:toggleShowAll` | `ctrl+e` | Transcript |
@@ -246,38 +257,57 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `footer:openSelected` | `enter` | Footer |
 | `footer:clearSelection` | `escape` | Footer |
 | `footer:close` | `x` | Footer |
-| `footer:dismiss` | `backspace`, `delete` | Footer |
-| `messageSelector:up` | `up`, `k`, `ctrl+p` | MessageSelector |
-| `messageSelector:down` | `down`, `j`, `ctrl+n` | MessageSelector |
-| `messageSelector:top` | `ctrl+up`, `shift+up`, `meta+up`, `shift+k` | MessageSelector |
-| `messageSelector:bottom` | `ctrl+down`, `shift+down`, `meta+down`, `shift+j` | MessageSelector |
-| `messageSelector:select` | `enter` | MessageSelector |
+| `footer:dismiss` | (none) | Footer |
+| `abovePrompt:toggle` | `ctrl+x ctrl+a` | Chat |
+| `abovePrompt:focus` | `ctrl+x tab` | Chat |
+| `abovePrompt:next` | `tab`, `right`, `tab`, `tab`, `tab` | AbovePrompt |
+| `abovePrompt:previous` | `shift+tab`, `left`, `shift+tab`, `shift+tab`, `shift+tab` | AbovePrompt |
+| `abovePrompt:press` | `enter`, `space`, `enter`, `enter`, `enter` | AbovePrompt |
+| `abovePrompt:leave` | `escape`, `escape`, `escape`, `escape` | AbovePrompt |
+| `abovePrompt:highlightNext` | `down` | AbovePromptSelect |
+| `abovePrompt:highlightPrevious` | `up` | AbovePromptSelect |
+| `pane:scrollUp` | `up`, `up` | AbovePrompt |
+| `pane:scrollDown` | `down`, `down` | AbovePrompt |
+| `pane:pageUp` | `pageup`, `pageup` | AbovePrompt |
+| `pane:pageDown` | `pagedown`, `pagedown` | AbovePrompt |
+| `pane:top` | `home`, `home` | AbovePrompt |
+| `pane:bottom` | `end`, `end` | AbovePrompt |
+| `pane:grow` | `ctrl+x left`, `ctrl+x up` | Pane |
+| `pane:shrink` | `ctrl+x right`, `ctrl+x down` | Pane |
+| `pane:close` | `ctrl+x x`, `ctrl+x x` | Pane |
+| `pane:next` | (none) | Pane |
+| `pane:previous` | (none) | Pane |
 | `diff:dismiss` | `escape` | DiffDialog |
 | `diff:previousSource` | `left` | DiffDialog |
 | `diff:nextSource` | `right` | DiffDialog |
 | `diff:back` | (none) | DiffDialog |
-| `diff:viewDetails` | `enter` | DiffDialog |
 | `diff:previousFile` | `up`, `k` | DiffDialog |
 | `diff:nextFile` | `down`, `j` | DiffDialog |
 | `modelPicker:decreaseEffort` | `left` | ModelPicker |
 | `modelPicker:increaseEffort` | `right` | ModelPicker |
 | `modelPicker:thisSessionOnly` | `s` | ModelPicker |
+| `effortSlider:decreaseEffort` | `left` | EffortSlider |
+| `effortSlider:increaseEffort` | `right` | EffortSlider |
+| `effortSlider:toggleUltracode` | `tab` | EffortSlider |
+| `effortSlider:thisSessionOnly` | `s` | EffortSlider |
 | `select:next` | `down`, `j`, `ctrl+n`, `down`, `j`, `ctrl+n` | Settings |
 | `select:previous` | `up`, `k`, `ctrl+p`, `up`, `k`, `ctrl+p` | Settings |
-| `select:pageUp` | `pageup` | Select |
-| `select:pageDown` | `pagedown` | Select |
-| `select:first` | `home` | Select |
-| `select:last` | `end` | Select |
+| `select:pageUp` | `pageup`, `pageup` | Settings |
+| `select:pageDown` | `pagedown`, `pagedown` | Settings |
+| `select:first` | `home`, `home` | Settings |
+| `select:last` | `end`, `end` | Settings |
 | `select:accept` | `space`, `enter`, `enter` | Settings |
 | `select:cancel` | `escape` | Select |
 | `plugin:toggle` | `space` | Plugin |
 | `plugin:install` | `i` | Plugin |
 | `plugin:favorite` | `f` | Plugin |
+| `plugin:cycleMarketplace` | `ctrl+s` | Plugin |
 | `permission:toggleDebug` | (none) | Confirmation |
 | `settings:search` | `/` | Settings |
 | `settings:retry` | `r` | Settings |
 | `settings:periodDay` | `d` | Settings |
 | `settings:periodWeek` | `w` | Settings |
+| `settings:fixUsage` | `f` | Settings |
 | `settings:sortByTokens` | `t` | Settings |
 | `voice:pushToTalk` | `space` | Chat |
 | `scroll:pageUp` | `pageup`, `pageup` | Scroll |
@@ -298,3 +328,9 @@ Claude Code validates `~/.claude/keybindings.json` when it loads; warnings go to
 | `selection:extendDown` | `shift+down` | Scroll |
 | `selection:extendLineStart` | `shift+home` | Scroll |
 | `selection:extendLineEnd` | `shift+end` | Scroll |
+| `agents:switchView` | `ctrl+s` | Agents |
+| `agents:togglePin` | `ctrl+t` | Agents |
+| `agents:find` | `ctrl+f` | Agents |
+| `agents:nextGroup` | `ctrl+down`, `meta+down` | Agents |
+| `agents:previousGroup` | `ctrl+up`, `meta+up` | Agents |
+| `agents:rename` | `ctrl+r` | Agents |
