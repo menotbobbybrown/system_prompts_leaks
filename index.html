@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Prompts as MCP — Universal AI Persona Hub</title>
+  <meta name="description" content="Turn 100+ state-of-the-art system prompts (Anthropic, OpenAI, Cursor, DeepSeek, Gemini) into dynamic Model Context Protocol (MCP) personas for your AI agents.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f;
+      --bg-card: rgba(18, 20, 29, 0.7);
+      --bg-card-hover: rgba(26, 29, 43, 0.95);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(99, 102, 241, 0.4);
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --cyan: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.15);
+      --emerald: #10b981;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 50%),
+        radial-gradient(circle at 85% 20%, rgba(6, 182, 212, 0.08) 0%, transparent 40%);
+      background-repeat: no-repeat;
+    }
+
+    .container {
+      max-width: 1140px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Navbar */
+    header {
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(9, 10, 15, 0.85);
+    }
+    .nav-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+    }
+    .brand-badge {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-glow);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      font-family: var(--font-mono);
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.15s ease;
+    }
+    .nav-links a:hover {
+      color: var(--text-main);
+    }
+    .btn-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .btn-github:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 80px 0 50px;
+      text-align: center;
+    }
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: #38bdf8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 5vw, 3.6rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 20px;
+      background: linear-gradient(180deg, #ffffff 0%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      max-width: 720px;
+      margin: 0 auto 36px;
+    }
+
+    /* Quickstart Command Bar */
+    .hero-cmd-box {
+      max-width: 640px;
+      margin: 0 auto 40px;
+      background: #11131a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 8px 8px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+    }
+    .hero-cmd-text {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      color: #a5b4fc;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .hero-cmd-text span.prompt {
+      color: var(--text-dim);
+      user-select: none;
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #1e2230;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .copy-btn:hover {
+      background: #282e42;
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .copy-btn.copied {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: #10b981;
+      color: #34d399;
+    }
+
+    /* Sections */
+    section {
+      padding: 50px 0;
+    }
+    .section-head {
+      margin-bottom: 32px;
+    }
+    .section-head h2 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .section-head p {
+      color: var(--text-muted);
+      font-size: 0.98rem;
+    }
+
+    /* Grid */
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      backdrop-filter: blur(10px);
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .card:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(255, 255, 255, 0.18);
+      transform: translateY(-2px);
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .vendor-badge {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #f8fafc;
+    }
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      margin-bottom: 18px;
+      min-height: 42px;
+    }
+
+    .snippet-box {
+      background: #0d0f14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      gap: 8px;
+    }
+    .snippet-box code {
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .btn-sm-copy {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.15s;
+    }
+    .btn-sm-copy:hover {
+      color: var(--text-main);
+    }
+
+    /* Integration Tabs */
+    .tabs-wrap {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .tabs-header {
+      display: flex;
+      background: #11131a;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 14px 20px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+    .tab-btn.active {
+      color: #818cf8;
+      border-bottom-color: #6366f1;
+      background: rgba(99, 102, 241, 0.05);
+    }
+    .tab-content {
+      padding: 24px;
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .tab-code-block {
+      background: #0d0f14;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      position: relative;
+    }
+    .tab-code-block pre {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: #a5b4fc;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+    .tab-code-copy {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+    }
+
+    /* Table */
+    .cli-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--bg-card);
+    }
+    .cli-table th, .cli-table td {
+      padding: 14px 18px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .cli-table th {
+      background: #11131a;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .cli-table td code {
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      color: #818cf8;
+      background: rgba(99, 102, 241, 0.08);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .cli-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      margin-top: 60px;
+      color: var(--text-dim);
+      font-size: 0.88rem;
+      text-align: center;
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+    footer a:hover {
+      color: var(--text-main);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #181b24;
+      border: 1px solid #10b981;
+      color: #34d399;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <header>
+    <div class="container nav-wrap">
+      <a href="#" class="brand">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="promptsGrad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#6366F1"/>
+              <stop offset="0.5" stop-color="#06B6D4"/>
+              <stop offset="1" stop-color="#10B981"/>
+            </linearGradient>
+          </defs>
+          <rect x="2" y="2" width="28" height="28" rx="8" fill="#121520" stroke="rgba(255,255,255,0.12)" stroke-width="1.2"/>
+          <path d="M8 10H24M8 15H18M8 20H21" stroke="url(#promptsGrad)" stroke-width="2.2" stroke-linecap="round"/>
+          <circle cx="23" cy="20" r="2" fill="#06B6D4"/>
+        </svg>
+        System Prompts MCP
+        <span class="brand-badge">Auto-Syncing Hub</span>
+      </a>
+      <div class="nav-links">
+        <a href="#prompts">Featured Prompts</a>
+        <a href="#connect">Connect Client</a>
+        <a href="#cli">CLI Commands</a>
+        <a href="https://github.com/menotbobbybrown/system_prompts_leaks" target="_blank" class="btn-github">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          GitHub Fork
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <div class="container">
+    <div class="hero">
+      <div class="badge-pill">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+        Automated Daily Upstream Sync • MCP Prompts Protocol
+      </div>
+      <h1>Universal AI System Prompts<br>as Model Context Protocol (MCP)</h1>
+      <p>Give your AI agents instant access to 100+ battle-tested system prompts from Anthropic, OpenAI, Cursor, DeepSeek, and Google Gemini via standard MCP protocol.</p>
+
+      <!-- Main Copy Box -->
+      <div class="hero-cmd-box">
+        <div class="hero-cmd-text">
+          <span class="prompt">$</span>
+          <span>npx system-prompts-mcp list</span>
+        </div>
+        <button class="copy-btn" onclick="copySnippet('npx system-prompts-mcp list', this)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          Copy
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Featured Prompts Catalog -->
+  <section id="prompts" class="container">
+    <div class="section-head">
+      <h2>Curated AI Persona Library</h2>
+      <p>Instantly inspect and adopt system instructions across major frontier models.</p>
+    </div>
+
+    <div class="grid-3">
+      <!-- Anthropic Claude -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>Claude 3.7 / Sonnet 4.6</h3>
+            <span class="vendor-badge">Anthropic</span>
+          </div>
+          <p>Autonomous multi-file architecture, planning loops, and concise reasoning instructions.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get anthropic/sonnet-4.6-reminders</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get anthropic/sonnet-4.6-reminders', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cursor Composer -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>Cursor Agent & Composer</h3>
+            <span class="vendor-badge">Cursor</span>
+          </div>
+          <p>Targeted code refactoring, context-aware line diff editing, and file tree exploration.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get cursor/cursor</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get cursor/cursor', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- DeepSeek V3 / R1 -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>DeepSeek V3 & R1</h3>
+            <span class="vendor-badge">DeepSeek</span>
+          </div>
+          <p>Deep chain-of-thought mathematical reasoning, algorithmic analysis, and structured code synthesis.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get deepseek/deepseek-v3</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get deepseek/deepseek-v3', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- OpenAI o3-mini -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>OpenAI o3 & Operator</h3>
+            <span class="vendor-badge">OpenAI</span>
+          </div>
+          <p>Advanced step-by-step reasoning tokens, computer use, and structured function calling.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get openai/chatgpt</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get openai/chatgpt', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Google Gemini -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>Gemini 2.0 Flash / Pro</h3>
+            <span class="vendor-badge">Google</span>
+          </div>
+          <p>High-speed multimodal grounding, tool execution planning, and live search synthesis.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get google/gemini</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get google/gemini', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Qwen / OpenCode -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3>Qwen 2.5 & OpenCode</h3>
+            <span class="vendor-badge">Qwen</span>
+          </div>
+          <p>Open-weights coding expert instructions, multilingual understanding, and clean refactoring.</p>
+        </div>
+        <div class="snippet-box">
+          <code>system-prompts-mcp get qwen/qwen</code>
+          <button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get qwen/qwen', this)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Connect Section (Tabs) -->
+  <section id="connect" class="container">
+    <div class="section-head">
+      <h2>Connect to Your AI Agent</h2>
+      <p>1-Click configurations for DeepSeek Harness, Claude Desktop, Cursor, and Windsurf.</p>
+    </div>
+
+    <div class="tabs-wrap">
+      <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('tab-dsh', this)">DeepSeek Harness (dsh)</button>
+        <button class="tab-btn" onclick="switchTab('tab-claude', this)">Claude Desktop</button>
+        <button class="tab-btn" onclick="switchTab('tab-cursor', this)">Cursor IDE</button>
+      </div>
+
+      <!-- DeepSeek Harness Tab -->
+      <div id="tab-dsh" class="tab-content active">
+        <p style="color: var(--text-muted); margin-bottom: 12px; font-size: 0.9rem;">
+          Add to <code>~/.dsh/mcp.json</code> or your project's <code>.dsh/mcp.json</code>:
+        </p>
+        <div class="tab-code-block">
+          <pre><code>{
+  "mcpServers": {
+    "system_prompts": {
+      "command": "npx",
+      "args": ["-y", "system-prompts-mcp", "serve"]
+    }
+  }
+}</code></pre>
+          <button class="copy-btn tab-code-copy" onclick="copySnippet(`{\n  &quot;mcpServers&quot;: {\n    &quot;system_prompts&quot;: {\n      &quot;command&quot;: &quot;npx&quot;,\n      &quot;args&quot;: [&quot;-y&quot;, &quot;system-prompts-mcp&quot;, &quot;serve&quot;]\n    }\n  }\n}`, this)">
+            Copy JSON
+          </button>
+        </div>
+      </div>
+
+      <!-- Claude Desktop Tab -->
+      <div id="tab-claude" class="tab-content">
+        <p style="color: var(--text-muted); margin-bottom: 12px; font-size: 0.9rem;">
+          Add to <code>claude_desktop_config.json</code>:
+        </p>
+        <div class="tab-code-block">
+          <pre><code>{
+  "mcpServers": {
+    "system_prompts": {
+      "command": "npx",
+      "args": ["-y", "system-prompts-mcp", "serve"]
+    }
+  }
+}</code></pre>
+          <button class="copy-btn tab-code-copy" onclick="copySnippet(`{\n  &quot;mcpServers&quot;: {\n    &quot;system_prompts&quot;: {\n      &quot;command&quot;: &quot;npx&quot;,\n      &quot;args&quot;: [&quot;-y&quot;, &quot;system-prompts-mcp&quot;, &quot;serve&quot;]\n    }\n  }\n}`, this)">
+            Copy JSON
+          </button>
+        </div>
+      </div>
+
+      <!-- Cursor Tab -->
+      <div id="tab-cursor" class="tab-content">
+        <p style="color: var(--text-muted); margin-bottom: 12px; font-size: 0.9rem;">
+          Add to <code>.cursor/mcp.json</code>:
+        </p>
+        <div class="tab-code-block">
+          <pre><code>{
+  "mcpServers": {
+    "system_prompts": {
+      "command": "npx",
+      "args": ["-y", "system-prompts-mcp", "serve"]
+    }
+  }
+}</code></pre>
+          <button class="copy-btn tab-code-copy" onclick="copySnippet(`{\n  &quot;mcpServers&quot;: {\n    &quot;system_prompts&quot;: {\n      &quot;command&quot;: &quot;npx&quot;,\n      &quot;args&quot;: [&quot;-y&quot;, &quot;system-prompts-mcp&quot;, &quot;serve&quot;]\n    }\n  }\n}`, this)">
+            Copy JSON
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI Cheat Sheet -->
+  <section id="cli" class="container">
+    <div class="section-head">
+      <h2>Terminal CLI Commands</h2>
+      <p>Explore, search, and run system prompts directly from command line.</p>
+    </div>
+
+    <table class="cli-table">
+      <thead>
+        <tr>
+          <th>Command</th>
+          <th>Description</th>
+          <th>Copy</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>npx system-prompts-mcp list</code></td>
+          <td>List all 100+ discovered system prompts</td>
+          <td><button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp list', this)">Copy</button></td>
+        </tr>
+        <tr>
+          <td><code>npx system-prompts-mcp list Anthropic</code></td>
+          <td>Filter prompts by vendor (Anthropic, OpenAI, Cursor, DeepSeek, etc.)</td>
+          <td><button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp list Anthropic', this)">Copy</button></td>
+        </tr>
+        <tr>
+          <td><code>npx system-prompts-mcp get cursor/cursor</code></td>
+          <td>Print the full system prompt markdown to stdout</td>
+          <td><button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp get cursor/cursor', this)">Copy</button></td>
+        </tr>
+        <tr>
+          <td><code>npx system-prompts-mcp search "reasoning"</code></td>
+          <td>Search prompts by keyword or domain</td>
+          <td><button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp search \"reasoning\"', this)">Copy</button></td>
+        </tr>
+        <tr>
+          <td><code>npx system-prompts-mcp serve</code></td>
+          <td>Start the stdio Model Context Protocol (MCP) Server for agents</td>
+          <td><button class="btn-sm-copy" onclick="copySnippet('npx system-prompts-mcp serve', this)">Copy</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <p>MIT Licensed • Automatically Synced with Upstream • Built for DeepSeek Harness & MCP Ecosystem</p>
+      <p style="margin-top: 6px;">
+        <a href="https://github.com/menotbobbybrown/system_prompts_leaks" target="_blank">GitHub Repository</a> •
+        <a href="https://github.com/menotbobbybrown/dsh-plugin-mcp" target="_blank">dsh-plugin-mcp</a>
+      </p>
+    </div>
+  </footer>
+
+  <!-- Toast Element -->
+  <div id="toast" class="toast">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+    <span>Command copied to clipboard!</span>
+  </div>
+
+  <script>
+    function copySnippet(text, buttonElement) {
+      navigator.clipboard.writeText(text).then(() => {
+        const originalText = buttonElement.innerHTML;
+        if (buttonElement.classList.contains('copy-btn')) {
+          buttonElement.classList.add('copied');
+          buttonElement.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+          setTimeout(() => {
+            buttonElement.classList.remove('copied');
+            buttonElement.innerHTML = originalText;
+          }, 2000);
+        } else {
+          buttonElement.style.color = '#34d399';
+          setTimeout(() => {
+            buttonElement.style.color = '';
+          }, 1500);
+        }
+
+        const toast = document.getElementById('toast');
+        toast.querySelector('span').textContent = `Copied: ${text.slice(0, 45)}...`;
+        toast.classList.add('show');
+        setTimeout(() => {
+          toast.classList.remove('show');
+        }, 2200);
+      }).catch(err => {
+        console.error('Failed to copy text: ', err);
+      });
+    }
+
+    function switchTab(tabId, btnElement) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+      btnElement.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
+  </script>
+</body>
+</html>
